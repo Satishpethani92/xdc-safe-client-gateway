@@ -16,7 +16,7 @@ async function redisClientFactory(
   const redisHost = configurationService.getOrThrow<string>('redis.host');
   const redisPort = configurationService.getOrThrow<string>('redis.port');
   const client: RedisClientType = createClient({
-    url: `redis://${redisHost}:${redisPort}`,
+    url: `redis://${redisHost}:${redisPort}/2`,
   });
   client.on('error', (err) =>
     loggingService.error(`Redis client error: ${err}`),

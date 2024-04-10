@@ -682,6 +682,7 @@ export class TransactionApi implements ITransactionApi {
         chainId: this.chainId,
         ownerAddress,
       });
+      console.log(this.baseUrl);
       const url = `${this.baseUrl}/api/v1/owners/${ownerAddress}/safes/`;
       return await this.dataSource.get({
         cacheDir,
@@ -690,6 +691,7 @@ export class TransactionApi implements ITransactionApi {
         expireTimeSeconds: this.ownersExpirationTimeSeconds,
       });
     } catch (error) {
+      console.log(error);
       throw this.httpErrorFactory.from(this.mapError(error));
     }
   }

@@ -14,7 +14,7 @@ export default () => ({
     account: process.env.ALERTS_PROVIDER_ACCOUNT,
     project: process.env.ALERTS_PROVIDER_PROJECT,
   },
-  applicationPort: process.env.APPLICATION_PORT || '3000',
+  applicationPort: process.env.APPLICATION_PORT || '3001',
   auth: {
     token: process.env.AUTH_TOKEN,
   },

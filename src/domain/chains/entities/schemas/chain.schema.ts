@@ -6,7 +6,7 @@ export const NativeCurrencySchema = z.object({
   name: z.string(),
   symbol: z.string(),
   decimals: z.number(),
-  logoUri: z.string().url(),
+  logoUri: z.string(),
 });
 
 export const RpcUriSchema = z.object({

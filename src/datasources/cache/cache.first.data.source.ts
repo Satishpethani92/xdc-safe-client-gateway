@@ -69,10 +69,11 @@ export class CacheFirstDataSource {
   }): Promise<T> {
     const cached = await this.cacheService.get(args.cacheDir);
     if (cached != null) return this._getFromCachedData(args.cacheDir, cached);
-
+    console.log('url', args.url);
     try {
       return await this._getFromNetworkAndWriteCache(args);
     } catch (error) {
+      console.log('error', error);
       if (
         error instanceof NetworkResponseError &&
         error.response.status === 404
@@ -122,7 +123,7 @@ export class CacheFirstDataSource {
       url: args.url,
       networkRequest: args.networkRequest,
     });
-
+    console.log('data', data);
     const shouldBeCached = await this._shouldBeCached(key, startTimeMs);
     if (shouldBeCached) {
       await this.cacheService.set(

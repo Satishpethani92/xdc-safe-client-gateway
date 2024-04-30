@@ -125,13 +125,14 @@ export class CacheFirstDataSource {
     });
     console.log('data', data);
     const shouldBeCached = await this._shouldBeCached(key, startTimeMs);
+    console.log('shouldBeCached', shouldBeCached);
     if (shouldBeCached) {
       await this.cacheService.set(
         args.cacheDir,
         JSON.stringify(data),
         args.expireTimeSeconds,
       );
-
+      console.log('cacheService');
       // TODO: transient logging for debugging
       if (
         this.isHistoryDebugLogsEnabled &&

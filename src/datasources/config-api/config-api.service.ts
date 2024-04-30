@@ -43,7 +43,6 @@ export class ConfigApi implements IConfigApi {
   }): Promise<Page<Chain>> {
     try {
       const url = `${this.baseUri}/api/v1/chains`;
-      console.log('url', url);
       const params = { limit: args.limit, offset: args.offset };
       const cacheDir = CacheRouter.getChainsCacheDir(args);
       return await this.dataSource.get({

@@ -127,7 +127,12 @@ export class CacheFirstDataSource {
     const shouldBeCached = await this._shouldBeCached(key, startTimeMs);
     console.log('shouldBeCached', shouldBeCached);
     if (shouldBeCached) {
-      console.log(args.cacheDir, JSON.stringify(data), args.expireTimeSeconds);
+      console.log(
+        'cacheService',
+        args.cacheDir,
+        JSON.stringify(data),
+        args.expireTimeSeconds,
+      );
       await this.cacheService.set(
         args.cacheDir,
         JSON.stringify(data),

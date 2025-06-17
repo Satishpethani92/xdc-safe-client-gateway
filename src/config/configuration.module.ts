@@ -1,9 +1,10 @@
+import { IConfigurationService } from '@/config/configuration.service.interface';
+import configurationValidator from '@/config/configuration.validator';
+import { RootConfigurationSchema } from '@/config/entities/schemas/configuration.schema';
+import { NestConfigurationService } from '@/config/nest.configuration.service';
 import { DynamicModule, Global, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ConfigFactory } from '@nestjs/config/dist/interfaces/config-factory.interface';
-import { IConfigurationService } from '@/config/configuration.service.interface';
-import { validate } from '@/config/configuration.validator';
-import { NestConfigurationService } from '@/config/nest.configuration.service';
 
 /**
  * A {@link Global} Module which provides local configuration support via {@link IConfigurationService}
@@ -20,7 +21,9 @@ export class ConfigurationModule {
       module: ConfigurationModule,
       imports: [
         ConfigModule.forRoot({
-          validate,
+          validate: (config: Record<string, unknown>) => {
+            return configurationValidator(config, RootConfigurationSchema);
+          },
           load: [configFactory],
         }),
       ],

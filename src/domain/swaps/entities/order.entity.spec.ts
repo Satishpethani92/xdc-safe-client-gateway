@@ -1,7 +1,8 @@
 import { orderBuilder } from '@/domain/swaps/entities/__tests__/order.builder';
 import { faker } from '@faker-js/faker';
 import { getAddress } from 'viem';
-import { Order, OrderSchema } from '@/domain/swaps/entities/order.entity';
+import type { Order } from '@/domain/swaps/entities/order.entity';
+import { OrderSchema } from '@/domain/swaps/entities/order.entity';
 
 describe('OrderSchema', () => {
   it('should validate a valid order', () => {
@@ -77,6 +78,7 @@ describe('OrderSchema', () => {
     'from',
     'owner',
     'onchainUser',
+    'executedFeeToken',
   ])('%s should be checksummed', (key) => {
     const order = {
       ...orderBuilder().build(),
@@ -98,7 +100,6 @@ describe('OrderSchema', () => {
     'ethflowData',
     'onchainUser',
     'onchainOrderData',
-    'executedSurplusFee',
     'fullAppData',
   ])('%s should default to null if value not present', (key) => {
     const order = orderBuilder().build();
@@ -121,6 +122,29 @@ describe('OrderSchema', () => {
       expect(result.success && result.data.ethflowData?.refundTxHash).toBe(
         null,
       );
+    });
+  });
+
+  describe('fullAppData', () => {
+    it.each([
+      '[]',
+      '{}',
+      'null',
+      '{\n  "version": "0.1.0",\n  "appCode": "Yearn",\n  "metadata": {\n    "referrer": {\n      "version": "0.1.0",\n      "address": "0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52"\n    }\n  }\n}\n',
+    ])('%s is valid', (fullAppData) => {
+      const order = orderBuilder().with('fullAppData', fullAppData).build();
+
+      const result = OrderSchema.safeParse(order);
+
+      expect(result.success).toBe(true);
+    });
+
+    it.each(['a', 'a : b', '{', '['])('%s is not valid', (fullAppData) => {
+      const order = orderBuilder().with('fullAppData', fullAppData).build();
+
+      const result = OrderSchema.safeParse(order);
+
+      expect(result.success).toBe(false);
     });
   });
 });

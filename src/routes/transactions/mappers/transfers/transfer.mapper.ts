@@ -10,6 +10,7 @@ import { TransferInfoMapper } from '@/routes/transactions/mappers/transfers/tran
 import { Transaction } from '@/routes/transactions/entities/transaction.entity';
 import { isTransferTransactionInfo } from '@/routes/transactions/entities/transfer-transaction-info.entity';
 import { isErc20Transfer } from '@/routes/transactions/entities/transfers/erc20-transfer.entity';
+import { isSwapTransferTransactionInfo } from '@/routes/transactions/swap-transfer-transaction-info.entity';
 
 @Injectable()
 export class TransferMapper {
@@ -27,15 +28,16 @@ export class TransferMapper {
       await this.transferInfoMapper.mapTransferInfo(chainId, transfer, safe),
       null,
       null,
+      transfer.transactionHash,
     );
   }
 
   async mapTransfers(args: {
     chainId: string;
-    transfers: Transfer[];
+    transfers: Array<Transfer>;
     safe: Safe;
     onlyTrusted: boolean;
-  }): Promise<Transaction[]> {
+  }): Promise<Array<Transaction>> {
     const transactions = await Promise.all(
       args.transfers.map((transfer) =>
         this.mapTransfer(args.chainId, transfer, args.safe),
@@ -61,14 +63,22 @@ export class TransferMapper {
    * @private
    */
   private isTransferWithValue(transaction: Transaction): boolean {
-    if (!isTransferTransactionInfo(transaction.txInfo)) return true;
+    if (
+      !isTransferTransactionInfo(transaction.txInfo) &&
+      !isSwapTransferTransactionInfo(transaction.txInfo)
+    )
+      return true;
     if (!isErc20Transfer(transaction.txInfo.transferInfo)) return true;
 
     return Number(transaction.txInfo.transferInfo.value) > 0;
   }
 
   private isTrustedTransfer(transaction: Transaction): boolean {
-    if (!isTransferTransactionInfo(transaction.txInfo)) return true;
+    if (
+      !isTransferTransactionInfo(transaction.txInfo) &&
+      !isSwapTransferTransactionInfo(transaction.txInfo)
+    )
+      return true;
     if (!isErc20Transfer(transaction.txInfo.transferInfo)) return true;
 
     return !!transaction.txInfo.transferInfo.trusted;

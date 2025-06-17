@@ -1,4 +1,7 @@
 import { SafeApp } from '@/domain/safe-apps/entities/safe-app.entity';
+import { Module } from '@nestjs/common';
+import { SafeAppsRepository } from '@/domain/safe-apps/safe-apps.repository';
+import { ConfigApiModule } from '@/datasources/config-api/config-api.module';
 
 export const ISafeAppsRepository = Symbol('ISafeAppsRepository');
 
@@ -9,8 +12,9 @@ export interface ISafeAppsRepository {
   getSafeApps(args: {
     chainId?: string;
     clientUrl?: string;
+    onlyListed?: boolean;
     url?: string;
-  }): Promise<SafeApp[]>;
+  }): Promise<Array<SafeApp>>;
 
   /**
    * Triggers the removal of the safe apps data stored in the DataSource (e.g., cache)
@@ -27,3 +31,15 @@ export interface ISafeAppsRepository {
    */
   getSafeAppById(chainId: string, id: number): Promise<SafeApp | null>;
 }
+
+@Module({
+  imports: [ConfigApiModule],
+  providers: [
+    {
+      provide: ISafeAppsRepository,
+      useClass: SafeAppsRepository,
+    },
+  ],
+  exports: [ISafeAppsRepository],
+})
+export class SafeAppsRepositoryModule {}

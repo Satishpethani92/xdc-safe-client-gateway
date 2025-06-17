@@ -1,11 +1,11 @@
 import { pageBuilder } from '@/domain/entities/__tests__/page.builder';
-import { Page } from '@/domain/entities/page.entity';
+import type { Page } from '@/domain/entities/page.entity';
 import { moduleTransactionBuilder } from '@/domain/safe/entities/__tests__/module-transaction.builder';
-import { ModuleTransaction } from '@/domain/safe/entities/module-transaction.entity';
+import type { ModuleTransaction } from '@/domain/safe/entities/module-transaction.entity';
 import {
   ModuleTransactionPageSchema,
   ModuleTransactionSchema,
-} from '@/domain/safe/entities/schemas/module-transaction.schema';
+} from '@/domain/safe/entities/module-transaction.entity';
 import { faker } from '@faker-js/faker';
 import { getAddress } from 'viem';
 import { ZodError } from 'zod';
@@ -38,7 +38,7 @@ describe('ModuleTransaction schemas', () => {
       },
     );
 
-    it.each(['value' as const, 'data' as const, 'dataDecoded' as const])(
+    it.each(['value' as const, 'data' as const])(
       'should allow %s to be undefined, defaulting to null',
       (key) => {
         const moduleTransaction = moduleTransactionBuilder().build();
@@ -63,7 +63,7 @@ describe('ModuleTransaction schemas', () => {
           new ZodError([
             {
               code: 'custom',
-              message: 'Invalid input',
+              message: 'Invalid "0x" notated hex string',
               path: [key],
             },
           ]),

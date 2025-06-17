@@ -1,7 +1,7 @@
 import { Body, Controller, Get, INestApplication, Post } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TestAppProvider } from '@/__tests__/test-app.provider';
-import * as request from 'supertest';
+import request from 'supertest';
 import { APP_FILTER } from '@nestjs/core';
 import { TestLoggingModule } from '@/logging/__tests__/test.logging.module';
 import { ConfigurationModule } from '@/config/configuration.module';
@@ -10,6 +10,7 @@ import { ZodErrorFilter } from '@/routes/common/filters/zod-error.filter';
 import { z } from 'zod';
 import { ValidationPipe } from '@/validation/pipes/validation.pipe';
 import { faker } from '@faker-js/faker';
+import { Server } from 'net';
 
 const ZodSchema = z.object({
   value: z.string(),
@@ -32,36 +33,41 @@ const ZodNestedUnionSchema = z.union([
 @Controller({})
 class TestController {
   @Post('zod-exception')
-  async zodError(
+  zodError(
     @Body(new ValidationPipe(ZodSchema)) body: z.infer<typeof ZodSchema>,
-  ): Promise<z.infer<typeof ZodSchema>> {
+  ): z.infer<typeof ZodSchema> {
     return body;
   }
 
   @Post('zod-union-exception')
-  async zodUnionError(
+  zodUnionError(
     @Body(new ValidationPipe(ZodUnionSchema))
     body: z.infer<typeof ZodUnionSchema>,
-  ): Promise<z.infer<typeof ZodUnionSchema>> {
+  ): z.infer<typeof ZodUnionSchema> {
     return body;
   }
 
   @Post('zod-nested-union-exception')
-  async zodNestedUnionError(
+  zodNestedUnionError(
     @Body(new ValidationPipe(ZodNestedUnionSchema))
     body: z.infer<typeof ZodNestedUnionSchema>,
-  ): Promise<z.infer<typeof ZodNestedUnionSchema>> {
+  ): z.infer<typeof ZodNestedUnionSchema> {
     return body;
   }
 
+  @Post('zod-standard')
+  zodStandardError(): number {
+    return z.number().parse('string');
+  }
+
   @Get('non-zod-exception')
-  async nonZodException(): Promise<void> {
+  nonZodException(): void {
     throw new Error('Some random error');
   }
 }
 
 describe('ZodErrorFilter tests', () => {
-  let app: INestApplication;
+  let app: INestApplication<Server>;
 
   beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -83,7 +89,7 @@ describe('ZodErrorFilter tests', () => {
     await app.close();
   });
 
-  it('ZodError exception returns first issue', async () => {
+  it('ZodErrorWithCode exception returns first issue', async () => {
     await request(app.getHttpServer())
       .post('/zod-exception')
       .send({ value: faker.number.int() })
@@ -98,7 +104,7 @@ describe('ZodErrorFilter tests', () => {
       });
   });
 
-  it('ZodError union exception returns first issue of first union issue', async () => {
+  it('ZodErrorWithCode union exception returns first issue of first union issue', async () => {
     await request(app.getHttpServer())
       .post('/zod-union-exception')
       .send({ value: faker.datatype.boolean() })
@@ -113,7 +119,7 @@ describe('ZodErrorFilter tests', () => {
       });
   });
 
-  it('ZodError nested union exception returns first issue of nested union issue', async () => {
+  it('ZodErrorWithCode nested union exception returns first issue of nested union issue', async () => {
     await request(app.getHttpServer())
       .post('/zod-union-exception')
       .send({
@@ -132,7 +138,17 @@ describe('ZodErrorFilter tests', () => {
       });
   });
 
-  it('non-ZodError exception returns correct error code and message', async () => {
+  it('ZodError returns 502', async () => {
+    await request(app.getHttpServer())
+      .post('/zod-standard')
+      .expect(502)
+      .expect({
+        statusCode: 502,
+        message: 'Bad gateway',
+      });
+  });
+
+  it('non-ZodError/ZodErrorWithCode exception returns correct error code and message', async () => {
     await request(app.getHttpServer())
       .get('/non-zod-exception')
       .expect(500)

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { isEmpty } from 'lodash';
+import isEmpty from 'lodash/isEmpty';
 import { ModuleTransaction } from '@/domain/safe/entities/module-transaction.entity';
 import { AddressInfoHelper } from '@/routes/common/address-info/address-info.helper';
 import {
@@ -12,6 +12,7 @@ import { TransactionDetails } from '@/routes/transactions/entities/transaction-d
 import { MultisigTransactionInfoMapper } from '@/routes/transactions/mappers/common/transaction-info.mapper';
 import { ModuleTransactionStatusMapper } from '@/routes/transactions/mappers/module-transactions/module-transaction-status.mapper';
 import { TransactionDataMapper } from '@/routes/transactions/mappers/common/transaction-data.mapper';
+import { DataDecoded } from '@/routes/data-decode/entities/data-decoded.entity';
 
 @Injectable()
 export class ModuleTransactionDetailsMapper {
@@ -25,13 +26,18 @@ export class ModuleTransactionDetailsMapper {
   async mapDetails(
     chainId: string,
     transaction: ModuleTransaction,
+    dataDecoded: DataDecoded | null,
   ): Promise<TransactionDetails> {
     const [moduleAddress, txInfo, txData] = await Promise.all([
       this.addressInfoHelper.getOrDefault(chainId, transaction.module, [
         'CONTRACT',
       ]),
-      this.transactionInfoMapper.mapTransactionInfo(chainId, transaction),
-      this.mapTransactionData(chainId, transaction),
+      this.transactionInfoMapper.mapTransactionInfo(
+        chainId,
+        transaction,
+        dataDecoded,
+      ),
+      this.mapTransactionData(chainId, transaction, dataDecoded),
     ]);
 
     return {
@@ -44,39 +50,48 @@ export class ModuleTransactionDetailsMapper {
       txHash: transaction.transactionHash,
       detailedExecutionInfo: new ModuleExecutionDetails(moduleAddress),
       safeAppInfo: null,
+      note: null,
     };
   }
 
   private async mapTransactionData(
     chainId: string,
     transaction: ModuleTransaction,
+    dataDecoded: DataDecoded | null,
   ): Promise<TransactionData> {
-    const [addressInfoIndex, trustedDelegateCallTarget, toAddress] =
-      await Promise.all([
-        this.transactionDataMapper.buildAddressInfoIndex(
-          chainId,
-          transaction.dataDecoded,
-        ),
-        this.transactionDataMapper.isTrustedDelegateCall(
-          chainId,
-          transaction.operation,
-          transaction.to,
-          transaction.dataDecoded,
-        ),
-        this.addressInfoHelper.getOrDefault(chainId, transaction.to, [
-          'TOKEN',
-          'CONTRACT',
-        ]),
-      ]);
+    const [
+      addressInfoIndex,
+      trustedDelegateCallTarget,
+      toAddress,
+      tokenInfoIndex,
+    ] = await Promise.all([
+      this.transactionDataMapper.buildAddressInfoIndex(chainId, dataDecoded),
+      this.transactionDataMapper.isTrustedDelegateCall(
+        chainId,
+        transaction.operation,
+        transaction.to,
+        dataDecoded,
+      ),
+      this.addressInfoHelper.getOrDefault(chainId, transaction.to, [
+        'TOKEN',
+        'CONTRACT',
+      ]),
+      this.transactionDataMapper.buildTokenInfoIndex({
+        chainId,
+        safeAddress: transaction.safe,
+        dataDecoded,
+      }),
+    ]);
 
     return {
       to: toAddress,
       value: transaction.value,
       hexData: transaction.data,
-      dataDecoded: transaction.dataDecoded,
+      dataDecoded,
       operation: transaction.operation,
       addressInfoIndex: isEmpty(addressInfoIndex) ? null : addressInfoIndex,
       trustedDelegateCallTarget,
+      tokenInfoIndex: isEmpty(tokenInfoIndex) ? null : tokenInfoIndex,
     };
   }
 }

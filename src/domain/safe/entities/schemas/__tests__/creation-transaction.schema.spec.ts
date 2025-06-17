@@ -1,5 +1,5 @@
 import { creationTransactionBuilder } from '@/domain/safe/entities/__tests__/creation-transaction.builder';
-import { CreationTransaction } from '@/domain/safe/entities/creation-transaction.entity';
+import type { CreationTransaction } from '@/domain/safe/entities/creation-transaction.entity';
 import { CreationTransactionSchema } from '@/domain/safe/entities/schemas/creation-transaction.schema';
 import { faker } from '@faker-js/faker';
 import { getAddress } from 'viem';
@@ -44,21 +44,40 @@ describe('CreationTransactionSchema', () => {
     );
   });
 
+  it.each(['masterCopy' as const, 'setupData' as const, 'saltNonce' as const])(
+    'should allow an optional %s',
+    (field) => {
+      const creationTransaction = creationTransactionBuilder().build();
+      delete creationTransaction[field];
+
+      const result = CreationTransactionSchema.safeParse(creationTransaction);
+
+      expect(result.success && result.data[field]).toBe(null);
+    },
+  );
+
   it.each([
+    'creator' as const,
+    'factoryAddress' as const,
     'masterCopy' as const,
-    'setupData' as const,
-    'dataDecoded' as const,
-  ])('should allow an optional %s', (field) => {
-    const creationTransaction = creationTransactionBuilder().build();
-    delete creationTransaction[field];
+  ])('should not allow non-address %s', (field) => {
+    const creationTransaction = creationTransactionBuilder()
+      .with(field, 'not an address' as `0x${string}`)
+      .build();
 
     const result = CreationTransactionSchema.safeParse(creationTransaction);
 
-    expect(result.success && result.data[field]).toBe(null);
+    expect(!result.success && result.error.issues).toEqual([
+      {
+        code: 'custom',
+        message: 'Invalid address',
+        path: [field],
+      },
+    ]);
   });
 
-  it.each(['creator' as const, 'setupData' as const])(
-    'should only allow hex %s',
+  it.each(['transactionHash' as const, 'setupData' as const])(
+    'should not allow non-hex %s',
     (field) => {
       const creationTransaction = creationTransactionBuilder()
         .with(field, 'not a hex string' as `0x${string}`)
@@ -69,7 +88,7 @@ describe('CreationTransactionSchema', () => {
       expect(!result.success && result.error.issues).toEqual([
         {
           code: 'custom',
-          message: 'Invalid input',
+          message: 'Invalid "0x" notated hex string',
           path: [field],
         },
       ]);

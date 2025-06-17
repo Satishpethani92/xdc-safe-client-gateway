@@ -1,12 +1,14 @@
 import { FakeConfigurationService } from '@/config/__tests__/fake.configuration.service';
-import { CacheFirstDataSource } from '@/datasources/cache/cache.first.data.source';
-import { ICacheService } from '@/datasources/cache/cache.service.interface';
+import type { CacheFirstDataSource } from '@/datasources/cache/cache.first.data.source';
+import type { ICacheService } from '@/datasources/cache/cache.service.interface';
 import { CacheDir } from '@/datasources/cache/entities/cache-dir.entity';
 import { ConfigApi } from '@/datasources/config-api/config-api.service';
-import { HttpErrorFactory } from '@/datasources/errors/http-error-factory';
+import type { HttpErrorFactory } from '@/datasources/errors/http-error-factory';
 import { chainBuilder } from '@/domain/chains/entities/__tests__/chain.builder';
 import { DataSourceError } from '@/domain/errors/data-source.error';
 import { safeAppBuilder } from '@/domain/safe-apps/entities/__tests__/safe-app.builder';
+import type { ILoggingService } from '@/logging/logging.interface';
+import { rawify } from '@/validation/entities/raw.entity';
 import { faker } from '@faker-js/faker';
 
 const dataSource = {
@@ -16,7 +18,7 @@ const mockDataSource = jest.mocked(dataSource);
 
 const cacheService = {
   deleteByKey: jest.fn(),
-  set: jest.fn(),
+  hSet: jest.fn(),
 } as jest.MockedObjectDeep<ICacheService>;
 const mockCacheService = jest.mocked(cacheService);
 
@@ -25,6 +27,10 @@ const httpErrorFactory = {
 } as jest.MockedObjectDeep<HttpErrorFactory>;
 const mockHttpErrorFactory = jest.mocked(httpErrorFactory);
 
+const mockLoggingService = {
+  info: jest.fn(),
+} as jest.MockedObjectDeep<ILoggingService>;
+
 describe('ConfigApi', () => {
   const baseUri = faker.internet.url({ appendSlash: false });
   const expirationTimeInSeconds = faker.number.int();
@@ -32,7 +38,7 @@ describe('ConfigApi', () => {
   let fakeConfigurationService: FakeConfigurationService;
   let service: ConfigApi;
 
-  beforeAll(async () => {
+  beforeAll(() => {
     fakeConfigurationService = new FakeConfigurationService();
     fakeConfigurationService.set('safeConfig.baseUri', baseUri);
     fakeConfigurationService.set(
@@ -43,35 +49,38 @@ describe('ConfigApi', () => {
       'expirationTimeInSeconds.notFound.default',
       notFoundExpirationTimeInSeconds,
     );
+    fakeConfigurationService.set('features.configHooksDebugLogs', false);
   });
 
-  beforeEach(async () => {
+  beforeEach(() => {
     jest.resetAllMocks();
     service = new ConfigApi(
       dataSource,
       mockCacheService,
       fakeConfigurationService,
       mockHttpErrorFactory,
+      mockLoggingService,
     );
   });
 
-  it('should error if configuration is not defined', async () => {
+  it('should error if configuration is not defined', () => {
     const fakeConfigurationService = new FakeConfigurationService();
 
-    await expect(
+    expect(
       () =>
         new ConfigApi(
           dataSource,
           mockCacheService,
           fakeConfigurationService,
           mockHttpErrorFactory,
+          mockLoggingService,
         ),
     ).toThrow();
   });
 
   it('should return the chains retrieved', async () => {
     const data = [chainBuilder().build(), chainBuilder().build()];
-    mockDataSource.get.mockResolvedValue(data);
+    mockDataSource.get.mockResolvedValue(rawify(data));
 
     const actual = await service.getChains({});
 
@@ -89,7 +98,7 @@ describe('ConfigApi', () => {
 
   it('should return the chain retrieved', async () => {
     const data = chainBuilder().build();
-    mockDataSource.get.mockResolvedValue(data);
+    mockDataSource.get.mockResolvedValue(rawify(data));
 
     const actual = await service.getChain(data.chainId);
 
@@ -107,14 +116,17 @@ describe('ConfigApi', () => {
   it('should return the safe apps retrieved by chainId', async () => {
     const chainId = faker.string.numeric();
     const data = [safeAppBuilder().build(), safeAppBuilder().build()];
-    mockDataSource.get.mockResolvedValue(data);
+    mockDataSource.get.mockResolvedValue(rawify(data));
 
     const actual = await service.getSafeApps({ chainId });
 
     expect(actual).toBe(data);
     expect(mockDataSource.get).toHaveBeenCalledTimes(1);
     expect(mockDataSource.get).toHaveBeenCalledWith({
-      cacheDir: new CacheDir(`${chainId}_safe_apps`, 'undefined_undefined'),
+      cacheDir: new CacheDir(
+        `${chainId}_safe_apps`,
+        'undefined_undefined_undefined',
+      ),
       url: `${baseUri}/api/v1/safe-apps/`,
       notFoundExpireTimeSeconds: notFoundExpirationTimeInSeconds,
       networkRequest: {
@@ -129,14 +141,17 @@ describe('ConfigApi', () => {
     const chainId = faker.string.numeric();
     const url = faker.internet.url({ appendSlash: false });
     const data = [safeAppBuilder().build(), safeAppBuilder().build()];
-    mockDataSource.get.mockResolvedValue(data);
+    mockDataSource.get.mockResolvedValue(rawify(data));
 
     const actual = await service.getSafeApps({ chainId, url });
 
     expect(actual).toBe(data);
     expect(mockDataSource.get).toHaveBeenCalledTimes(1);
     expect(mockDataSource.get).toHaveBeenCalledWith({
-      cacheDir: new CacheDir(`${chainId}_safe_apps`, `undefined_${url}`),
+      cacheDir: new CacheDir(
+        `${chainId}_safe_apps`,
+        `undefined_undefined_${url}`,
+      ),
       url: `${baseUri}/api/v1/safe-apps/`,
       notFoundExpireTimeSeconds: notFoundExpirationTimeInSeconds,
       networkRequest: { params: { chainId, clientUrl: undefined, url } },
@@ -149,17 +164,50 @@ describe('ConfigApi', () => {
     const chainId = faker.string.numeric();
     const clientUrl = faker.internet.url({ appendSlash: false });
     const data = [safeAppBuilder().build(), safeAppBuilder().build()];
-    mockDataSource.get.mockResolvedValue(data);
+    mockDataSource.get.mockResolvedValue(rawify(data));
 
     const actual = await service.getSafeApps({ chainId, clientUrl });
 
     expect(actual).toBe(data);
     expect(mockDataSource.get).toHaveBeenCalledTimes(1);
     expect(mockDataSource.get).toHaveBeenCalledWith({
-      cacheDir: new CacheDir(`${chainId}_safe_apps`, `${clientUrl}_undefined`),
+      cacheDir: new CacheDir(
+        `${chainId}_safe_apps`,
+        `${clientUrl}_undefined_undefined`,
+      ),
       url: `${baseUri}/api/v1/safe-apps/`,
       notFoundExpireTimeSeconds: notFoundExpirationTimeInSeconds,
       networkRequest: { params: { chainId, clientUrl, url: undefined } },
+      expireTimeSeconds: expirationTimeInSeconds,
+    });
+    expect(mockHttpErrorFactory.from).toHaveBeenCalledTimes(0);
+  });
+
+  it('should return the safe apps retrieved by chainId, clientUrl and onlyListed', async () => {
+    const chainId = faker.string.numeric();
+    const clientUrl = faker.internet.url({ appendSlash: false });
+    const onlyListed = faker.datatype.boolean();
+    const data = [safeAppBuilder().build(), safeAppBuilder().build()];
+    mockDataSource.get.mockResolvedValue(rawify(data));
+
+    const actual = await service.getSafeApps({
+      chainId,
+      clientUrl,
+      onlyListed,
+    });
+
+    expect(actual).toBe(data);
+    expect(mockDataSource.get).toHaveBeenCalledTimes(1);
+    expect(mockDataSource.get).toHaveBeenCalledWith({
+      cacheDir: new CacheDir(
+        `${chainId}_safe_apps`,
+        `${clientUrl}_${onlyListed}_undefined`,
+      ),
+      url: `${baseUri}/api/v1/safe-apps/`,
+      notFoundExpireTimeSeconds: notFoundExpirationTimeInSeconds,
+      networkRequest: {
+        params: { chainId, clientUrl, onlyListed, url: undefined },
+      },
       expireTimeSeconds: expirationTimeInSeconds,
     });
     expect(mockHttpErrorFactory.from).toHaveBeenCalledTimes(0);

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { max } from 'lodash';
-import * as semver from 'semver';
+import max from 'lodash/max';
+import semver from 'semver';
 import { IChainsRepository } from '@/domain/chains/chains.repository.interface';
 import { Singleton } from '@/domain/chains/entities/singleton.entity';
 import { MessagesRepository } from '@/domain/messages/messages.repository';
@@ -19,11 +19,13 @@ import {
 } from '@/routes/safes/entities/safe-info.entity';
 import { SafeNonces } from '@/routes/safes/entities/nonces.entity';
 import { Page } from '@/domain/entities/page.entity';
-import { getAddress } from 'viem';
 import { IBalancesRepository } from '@/domain/balances/balances.repository.interface';
 import { getNumberString } from '@/domain/common/utils/utils';
 import { SafeOverview } from '@/routes/safes/entities/safe-overview.entity';
 import { IConfigurationService } from '@/config/configuration.service.interface';
+import { LoggingService, ILoggingService } from '@/logging/logging.interface';
+import { asError } from '@/logging/utils';
+import { Caip10Addresses } from '@/routes/safes/entities/caip-10-addresses.entity';
 
 @Injectable()
 export class SafesService {
@@ -40,6 +42,7 @@ export class SafesService {
     @Inject(IBalancesRepository)
     private readonly balancesRepository: IBalancesRepository,
     @Inject(IConfigurationService) configurationService: IConfigurationService,
+    @Inject(LoggingService) private readonly loggingService: ILoggingService,
   ) {
     this.maxOverviews = configurationService.getOrThrow(
       'mappings.safe.maxOverviews',
@@ -48,7 +51,7 @@ export class SafesService {
 
   async getSafeInfo(args: {
     chainId: string;
-    safeAddress: string;
+    safeAddress: `0x${string}`;
   }): Promise<SafeState> {
     const [safe, { recommendedMasterCopyVersion }, supportedSingletons] =
       await Promise.all([
@@ -96,7 +99,7 @@ export class SafesService {
       this.modifiedMessageTag(args.chainId, args.safeAddress),
     ]);
 
-    let moduleAddressesInfo: AddressInfo[] | null = null;
+    let moduleAddressesInfo: Array<AddressInfo> | null = null;
     if (safe.modules) {
       const moduleInfoCollection: Array<AddressInfo> =
         await this.addressInfoHelper.getCollection(args.chainId, safe.modules, [
@@ -127,22 +130,23 @@ export class SafesService {
 
   async getSafeOverview(args: {
     currency: string;
-    addresses: Array<{ chainId: string; address: string }>;
+    addresses: Caip10Addresses;
     trusted: boolean;
     excludeSpam: boolean;
-    walletAddress?: string;
+    walletAddress?: `0x${string}`;
   }): Promise<Array<SafeOverview>> {
     const limitedSafes = args.addresses.slice(0, this.maxOverviews);
 
-    return Promise.all(
+    const settledOverviews = await Promise.allSettled(
       limitedSafes.map(async ({ chainId, address }) => {
+        const chain = await this.chainsRepository.getChain(chainId);
         const [safe, balances] = await Promise.all([
           this.safeRepository.getSafe({
             chainId,
             address,
           }),
           this.balancesRepository.getBalances({
-            chainId,
+            chain,
             safeAddress: address,
             trusted: args.trusted,
             fiatCode: args.currency,
@@ -176,11 +180,25 @@ export class SafesService {
         );
       }),
     );
+
+    const safeOverviews: Array<SafeOverview> = [];
+
+    for (const safeOverview of settledOverviews) {
+      if (safeOverview.status === 'rejected') {
+        this.loggingService.warn(
+          `Error while getting Safe overview: ${asError(safeOverview.reason)} `,
+        );
+      } else if (safeOverview.status === 'fulfilled') {
+        safeOverviews.push(safeOverview.value);
+      }
+    }
+
+    return safeOverviews;
   }
 
   public async getNonces(args: {
     chainId: string;
-    safeAddress: string;
+    safeAddress: `0x${string}`;
   }): Promise<SafeNonces> {
     const nonce = await this.safeRepository.getNonces(args);
     return new SafeNonces(nonce);
@@ -188,14 +206,24 @@ export class SafesService {
 
   private computeAwaitingConfirmation(args: {
     transactions: Array<MultisigTransaction>;
-    walletAddress: string;
+    walletAddress: `0x${string}`;
   }): number {
-    return args.transactions.reduce((acc, { confirmations }) => {
-      const isConfirmed = !!confirmations?.some((confirmation) => {
-        return confirmation.owner === args.walletAddress;
-      });
-      return isConfirmed ? acc - 1 : acc;
-    }, args.transactions.length);
+    return args.transactions.reduce(
+      (acc, { confirmationsRequired, confirmations }) => {
+        const isConfirmed =
+          !!confirmations && confirmations.length >= confirmationsRequired;
+        const isSignable =
+          !isConfirmed &&
+          !confirmations?.some((confirmation) => {
+            return confirmation.owner === args.walletAddress;
+          });
+        if (isSignable) {
+          acc++;
+        }
+        return acc;
+      },
+      0,
+    );
   }
 
   private toUnixTimestampInSecondsOrNull(date: Date | null): string | null {
@@ -204,7 +232,7 @@ export class SafesService {
 
   private async getCollectiblesTag(
     chainId: string,
-    safeAddress: string,
+    safeAddress: `0x${string}`,
   ): Promise<Date | null> {
     const lastCollectibleTransfer = await this.safeRepository
       .getCollectibleTransfers({
@@ -246,7 +274,7 @@ export class SafesService {
    */
   private async getTxHistoryTagDate(
     chainId: string,
-    safeAddress: string,
+    safeAddress: `0x${string}`,
   ): Promise<Date | null> {
     const txPages = await Promise.allSettled([
       this.safeRepository.getMultisigTransactions({
@@ -278,12 +306,16 @@ export class SafesService {
           page.status === 'fulfilled',
       )
       .flatMap(
-        ({ value }): (MultisigTransaction | ModuleTransaction | Transfer)[] =>
+        ({
+          value,
+        }): Array<MultisigTransaction | ModuleTransaction | Transfer> =>
           value.results,
       )
       .map((tx) => {
         const isMultisig = 'safeTxHash' in tx && tx.safeTxHash !== undefined;
-        return isMultisig ? tx.modified ?? tx.submissionDate : tx.executionDate;
+        return isMultisig
+          ? (tx.modified ?? tx.submissionDate)
+          : tx.executionDate;
       });
 
     return max(dates) ?? null;
@@ -291,7 +323,7 @@ export class SafesService {
 
   private async modifiedMessageTag(
     chainId: string,
-    safeAddress: string,
+    safeAddress: `0x${string}`,
   ): Promise<Date | null> {
     const messages = await this.messagesRepository.getMessagesBySafe({
       chainId,
@@ -311,28 +343,27 @@ export class SafesService {
 
   private computeVersionState(
     safe: Safe,
-    recommendedSafeVersion: string,
-    supportedSingletons: Singleton[],
+    recommendedMasterCopyVersion: string,
+    supportedSingletons: Array<Singleton>,
   ): MasterCopyVersionState {
     // If the safe version is null we return UNKNOWN
     if (safe.version === null) return MasterCopyVersionState.UNKNOWN;
     // If the safe version or the recommended safe version is not valid we return UNKNOWN
     if (!semver.valid(safe.version)) return MasterCopyVersionState.UNKNOWN;
-    if (!semver.valid(recommendedSafeVersion))
+    if (!semver.valid(recommendedMasterCopyVersion))
       return MasterCopyVersionState.UNKNOWN;
     // If the singleton of this safe is not part of the collection
     // of the supported singletons we return UNKNOWN
     if (
-      !supportedSingletons
-        .map((singleton) => singleton.address)
-        // TODO: Remove checksumming when Safe schema is in Zod
-        .includes(getAddress(safe.masterCopy))
+      supportedSingletons.every(
+        (singleton) => singleton.address !== safe.masterCopy,
+      )
     )
       return MasterCopyVersionState.UNKNOWN;
 
     // If the safe version is lower than the recommended safe version
     // we return it as outdated
-    if (semver.lt(safe.version, recommendedSafeVersion))
+    if (semver.lt(safe.version, recommendedMasterCopyVersion))
       return MasterCopyVersionState.OUTDATED;
 
     // Else we consider that the safe is up-to-date

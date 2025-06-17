@@ -1,21 +1,33 @@
+import { balancesProviderBuilder } from '@/domain/chains/entities/__tests__/balances-provider.builder';
+import { beaconChainExplorerUriTemplateBuilder } from '@/domain/chains/entities/__tests__/beacon-chain-explorer-uri-template.builder';
 import { chainBuilder } from '@/domain/chains/entities/__tests__/chain.builder';
+import { contractAddressesBuilder } from '@/domain/chains/entities/__tests__/contract-addresses.builder';
 import { gasPriceFixedEIP1559Builder } from '@/domain/chains/entities/__tests__/gas-price-fixed-eip-1559.builder';
 import { gasPriceFixedBuilder } from '@/domain/chains/entities/__tests__/gas-price-fixed.builder';
 import { gasPriceOracleBuilder } from '@/domain/chains/entities/__tests__/gas-price-oracle.builder';
 import { nativeCurrencyBuilder } from '@/domain/chains/entities/__tests__/native.currency.builder';
+import { pricesProviderBuilder } from '@/domain/chains/entities/__tests__/prices-provider.builder';
 import { rpcUriBuilder } from '@/domain/chains/entities/__tests__/rpc-uri.builder';
 import { themeBuilder } from '@/domain/chains/entities/__tests__/theme.builder';
+import type { Chain } from '@/domain/chains/entities/chain.entity';
 import {
   ChainSchema,
+  BalancesProviderSchema,
   GasPriceFixedEip1559Schema,
   GasPriceFixedSchema,
   GasPriceOracleSchema,
   GasPriceSchema,
   NativeCurrencySchema,
+  PricesProviderSchema,
   RpcUriSchema,
   ThemeSchema,
+  ContractAddressesSchema,
+  ChainLenientPageSchema,
+  BeaconChainExplorerUriTemplateSchema,
 } from '@/domain/chains/entities/schemas/chain.schema';
+import { pageBuilder } from '@/domain/entities/__tests__/page.builder';
 import { faker } from '@faker-js/faker';
+import { getAddress } from 'viem';
 import { ZodError } from 'zod';
 
 describe('Chain schemas', () => {
@@ -103,6 +115,58 @@ describe('Chain schemas', () => {
           },
         ]),
       );
+    });
+  });
+
+  describe('BeaconChainExplorerUriTemplate', () => {
+    it('should validate a BeaconChainExplorerUriTemplate', () => {
+      const beaconChainExplorerUriTemplate =
+        beaconChainExplorerUriTemplateBuilder().build();
+
+      const result = BeaconChainExplorerUriTemplateSchema.safeParse(
+        beaconChainExplorerUriTemplate,
+      );
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should allow a string publicKey', () => {
+      const beaconChainExplorerUriTemplate =
+        beaconChainExplorerUriTemplateBuilder()
+          .with(
+            'publicKey',
+            `${faker.internet.url({ appendSlash: false })}/{{publicKey}}`,
+          )
+          .build();
+
+      const result = BeaconChainExplorerUriTemplateSchema.safeParse(
+        beaconChainExplorerUriTemplate,
+      );
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should allow a null publicKey', () => {
+      const beaconChainExplorerUriTemplate =
+        beaconChainExplorerUriTemplateBuilder().with('publicKey', null).build();
+
+      const result = BeaconChainExplorerUriTemplateSchema.safeParse(
+        beaconChainExplorerUriTemplate,
+      );
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should default publicKey to null', () => {
+      const beaconChainExplorerUriTemplate = {
+        publicKey: null,
+      };
+
+      const result = BeaconChainExplorerUriTemplateSchema.safeParse(
+        beaconChainExplorerUriTemplate,
+      );
+
+      expect(result.success && result.data.publicKey).toBe(null);
     });
   });
 
@@ -302,6 +366,182 @@ describe('Chain schemas', () => {
     });
   });
 
+  describe('PricesProviderSchema', () => {
+    it('should validate a valid prices provider', () => {
+      const pricesProvider = pricesProviderBuilder().build();
+
+      const result = PricesProviderSchema.safeParse(pricesProvider);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should not validate an invalid prices provider chainName', () => {
+      const pricesProvider = pricesProviderBuilder()
+        .with('chainName', faker.number.int() as unknown as string)
+        .build();
+
+      const result = PricesProviderSchema.safeParse(pricesProvider);
+
+      expect(!result.success && result.error).toStrictEqual(
+        new ZodError([
+          {
+            code: 'invalid_type',
+            expected: 'string',
+            received: 'number',
+            path: ['chainName'],
+            message: 'Expected string, received number',
+          },
+        ]),
+      );
+    });
+
+    it('should not validate an invalid prices provider nativeCoin', () => {
+      const pricesProvider = pricesProviderBuilder()
+        .with('nativeCoin', faker.number.int() as unknown as string)
+        .build();
+
+      const result = PricesProviderSchema.safeParse(pricesProvider);
+
+      expect(!result.success && result.error).toStrictEqual(
+        new ZodError([
+          {
+            code: 'invalid_type',
+            expected: 'string',
+            received: 'number',
+            path: ['nativeCoin'],
+            message: 'Expected string, received number',
+          },
+        ]),
+      );
+    });
+  });
+
+  describe('BalancesProviderSchema', () => {
+    it('should validate a valid BalancesProvider', () => {
+      const balancesProvider = balancesProviderBuilder().build();
+
+      const result = BalancesProviderSchema.safeParse(balancesProvider);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should not validate an invalid balancesProvider chainName', () => {
+      const balancesProvider = balancesProviderBuilder().build();
+      // @ts-expect-error - chainName is expected to be a string
+      balancesProvider.chainName = faker.number.int();
+
+      const result = BalancesProviderSchema.safeParse(balancesProvider);
+
+      expect(!result.success && result.error).toStrictEqual(
+        new ZodError([
+          {
+            code: 'invalid_type',
+            expected: 'string',
+            received: 'number',
+            path: ['chainName'],
+            message: 'Expected string, received number',
+          },
+        ]),
+      );
+    });
+
+    it('should default balancesProvider chainName to null', () => {
+      const balancesProvider = balancesProviderBuilder().build();
+      // @ts-expect-error - inferred types don't allow optional fields
+      delete balancesProvider.chainName;
+
+      const result = BalancesProviderSchema.safeParse(balancesProvider);
+
+      expect(result.success && result.data.chainName).toStrictEqual(null);
+    });
+
+    it('should not validate an undefined balancesProvider enablement status', () => {
+      const balancesProvider = balancesProviderBuilder().build();
+      // @ts-expect-error - inferred types don't allow optional fields
+      delete balancesProvider.enabled;
+
+      const result = BalancesProviderSchema.safeParse(balancesProvider);
+
+      expect(!result.success && result.error).toStrictEqual(
+        new ZodError([
+          {
+            code: 'invalid_type',
+            expected: 'boolean',
+            received: 'undefined',
+            path: ['enabled'],
+            message: 'Required',
+          },
+        ]),
+      );
+    });
+
+    it('should not validate an invalid balancesProvider enablement status', () => {
+      const balancesProvider = balancesProviderBuilder().build();
+      // @ts-expect-error - enabled is expected to be a boolean
+      balancesProvider.enabled = 'true';
+
+      const result = BalancesProviderSchema.safeParse(balancesProvider);
+
+      expect(!result.success && result.error).toStrictEqual(
+        new ZodError([
+          {
+            code: 'invalid_type',
+            expected: 'boolean',
+            received: 'string',
+            path: ['enabled'],
+            message: 'Expected boolean, received string',
+          },
+        ]),
+      );
+    });
+  });
+
+  describe('ContractAddressesSchema', () => {
+    it('should validate a valid ContractAddresses', () => {
+      const contractAddresses = contractAddressesBuilder().build();
+
+      const result = ContractAddressesSchema.safeParse(contractAddresses);
+
+      expect(result.success).toBe(true);
+    });
+
+    [
+      'safeSingletonAddress' as const,
+      'safeProxyFactoryAddress' as const,
+      'multiSendAddress' as const,
+      'multiSendCallOnlyAddress' as const,
+      'fallbackHandlerAddress' as const,
+      'signMessageLibAddress' as const,
+      'createCallAddress' as const,
+      'simulateTxAccessorAddress' as const,
+      'safeWebAuthnSignerFactoryAddress' as const,
+    ].forEach((field) => {
+      it(`should checksum the ${field}`, () => {
+        const contractAddresses = contractAddressesBuilder()
+          .with(
+            field,
+            faker.finance.ethereumAddress().toLowerCase() as `0x${string}`,
+          )
+          .build();
+
+        const result = ContractAddressesSchema.safeParse(contractAddresses);
+
+        expect(result.success && result.data[field]).toBe(
+          getAddress(contractAddresses[field]!),
+        );
+      });
+
+      it(`should allow undefined ${field} and default to null`, () => {
+        const contractAddresses = contractAddressesBuilder().build();
+        delete contractAddresses[field];
+
+        const result = ContractAddressesSchema.safeParse(contractAddresses);
+
+        expect(result.success && result.data[field]).toBe(null);
+      });
+    });
+  });
+
   describe('ChainSchema', () => {
     it('should validate a valid chain', () => {
       const chain = chainBuilder().build();
@@ -309,6 +549,18 @@ describe('Chain schemas', () => {
       const result = ChainSchema.safeParse(chain);
 
       expect(result.success).toBe(true);
+    });
+
+    // TODO: Remove after Config Service is deployed
+    // @see https://github.com/safe-global/safe-config-service/pull/1339
+    it('should default zk to false', () => {
+      const chain = chainBuilder().build();
+      // @ts-expect-error - zk is expected to be a boolean
+      delete chain.zk;
+
+      const result = ChainSchema.safeParse(chain);
+
+      expect(result.success && result.data.zk).toBe(false);
     });
 
     it.each([['chainLogoUri' as const], ['ensRegistryAddress' as const]])(
@@ -320,6 +572,30 @@ describe('Chain schemas', () => {
         const result = ChainSchema.safeParse(chain);
 
         expect(result.success && result.data[field]).toBe(null);
+      },
+    );
+
+    it.each(['transactionService' as const, 'vpcTransactionService' as const])(
+      'accept non-trailing slash %s as is',
+      (field) => {
+        const url = faker.internet.url({ appendSlash: false });
+        const chain = chainBuilder().with(field, url).build();
+
+        const result = ChainSchema.safeParse(chain);
+
+        expect(result.success && result.data[field]).toBe(url);
+      },
+    );
+
+    it.each(['transactionService' as const, 'vpcTransactionService' as const])(
+      'should remove trailing slashes from %s',
+      (field) => {
+        const url = faker.internet.url({ appendSlash: false });
+        const chain = chainBuilder().with(field, `${url}/`).build();
+
+        const result = ChainSchema.safeParse(chain);
+
+        expect(result.success && result.data[field]).toBe(url);
       },
     );
 
@@ -348,6 +624,71 @@ describe('Chain schemas', () => {
           },
         ]),
       );
+    });
+
+    it.each([
+      ['rpcUri' as const],
+      ['safeAppsRpcUri' as const],
+      ['publicRpcUri' as const],
+      ['blockExplorerUriTemplate' as const],
+      ['beaconChainExplorerUriTemplate' as const],
+      ['contractAddresses' as const],
+      ['nativeCurrency' as const],
+      ['pricesProvider' as const],
+      ['balancesProvider' as const],
+      ['theme' as const],
+      // TODO: Include after Config Service is deployed
+      // @see https://github.com/safe-global/safe-config-service/pull/1339
+      // ['zk' as const]
+    ])('should not validate a chain without %s', (field) => {
+      const chain = chainBuilder().build();
+      delete chain[field];
+
+      const result = ChainSchema.safeParse(chain);
+
+      expect(!result.success && result.error).toStrictEqual(
+        new ZodError([
+          {
+            code: 'invalid_type',
+            expected: 'object',
+            received: 'undefined',
+            path: [field],
+            message: 'Required',
+          },
+        ]),
+      );
+    });
+  });
+
+  describe('ChainLenientPageSchema', () => {
+    it('should validate a valid Chain page', () => {
+      const chains = faker.helpers.multiple(() => chainBuilder().build(), {
+        count: { min: 1, max: 5 },
+      });
+      const chainPage = pageBuilder()
+        .with('results', chains)
+        .with('count', chains.length)
+        .build();
+
+      const result = ChainLenientPageSchema.safeParse(chainPage);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should exclude invalid Chain items', () => {
+      const chains = faker.helpers.multiple(() => chainBuilder().build(), {
+        count: { min: 1, max: 5 },
+      });
+      const chainPage = pageBuilder<Chain>()
+        .with('results', chains)
+        .with('count', chains.length)
+        .build();
+      // @ts-expect-error - results are assumed optional
+      delete chainPage.results[0].chainId;
+
+      const result = ChainLenientPageSchema.safeParse(chainPage);
+
+      expect(result.success).toBe(true);
     });
   });
 });

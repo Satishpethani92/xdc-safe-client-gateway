@@ -1,12 +1,15 @@
-import {
+import type {
   Abi,
   ContractEventName,
   ContractFunctionName,
   DecodeEventLogParameters,
   DecodeFunctionDataParameters,
   Hex,
+} from 'viem';
+import {
   decodeEventLog as _decodeEventLog,
   decodeFunctionData as _decodeFunctionData,
+  toFunctionSelector,
 } from 'viem';
 
 type Helper<TAbi extends Abi> = `is${Capitalize<ContractFunctionName<TAbi>>}`;
@@ -30,17 +33,10 @@ export function _generateHelpers<TAbi extends Abi>(
     }
 
     const helperName = `is${capitalize(item.name)}` as Helper<TAbi>;
+    const functionSelector = toFunctionSelector(item);
 
     helpers[helperName] = (data: Hex): boolean => {
-      try {
-        const { functionName } = _decodeFunctionData({
-          data,
-          abi,
-        });
-        return functionName === item.name;
-      } catch {
-        return false;
-      }
+      return data.startsWith(functionSelector);
     };
   }
 
@@ -59,7 +55,7 @@ export abstract class AbiDecoder<TAbi extends Abi> {
   decodeEventLog<
     const abi extends TAbi,
     eventName extends ContractEventName<abi> | undefined = undefined,
-    topics extends Hex[] = Hex[],
+    topics extends Array<Hex> = Array<Hex>,
     data extends Hex | undefined = undefined,
     strict extends boolean = true,
   >(

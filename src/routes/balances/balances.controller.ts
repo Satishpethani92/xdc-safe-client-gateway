@@ -6,9 +6,11 @@ import {
   ParseBoolPipe,
   Query,
 } from '@nestjs/common';
-import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { BalancesService } from '@/routes/balances/balances.service';
 import { Balances } from '@/routes/balances/entities/balances.entity';
+import { ValidationPipe } from '@/validation/pipes/validation.pipe';
+import { AddressSchema } from '@/validation/entities/schemas/address.schema';
 
 @ApiTags('balances')
 @Controller({
@@ -19,10 +21,13 @@ export class BalancesController {
   constructor(private readonly balancesService: BalancesService) {}
 
   @ApiOkResponse({ type: Balances })
+  @ApiQuery({ name: 'trusted', required: false, type: Boolean })
+  @ApiQuery({ name: 'exclude_spam', required: false, type: Boolean })
   @Get('chains/:chainId/safes/:safeAddress/balances/:fiatCode')
   async getBalances(
     @Param('chainId') chainId: string,
-    @Param('safeAddress') safeAddress: string,
+    @Param('safeAddress', new ValidationPipe(AddressSchema))
+    safeAddress: `0x${string}`,
     @Param('fiatCode') fiatCode: string,
     @Query('trusted', new DefaultValuePipe(false), ParseBoolPipe)
     trusted: boolean,
@@ -39,7 +44,8 @@ export class BalancesController {
   }
 
   @Get('balances/supported-fiat-codes')
-  async getSupportedFiatCodes(): Promise<string[]> {
+  @ApiOkResponse({ type: [String] })
+  async getSupportedFiatCodes(): Promise<Array<string>> {
     return this.balancesService.getSupportedFiatCodes();
   }
 }

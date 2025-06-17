@@ -28,7 +28,45 @@ describe('UpdateMessageSignatureDtoSchema', () => {
       new ZodError([
         {
           code: 'custom',
-          message: 'Invalid input',
+          message: 'Invalid "0x" notated hex string',
+          path: ['signature'],
+        },
+        {
+          code: 'custom',
+          message: 'Invalid hex bytes',
+          path: ['signature'],
+        },
+        {
+          code: 'custom',
+          message: 'Invalid signature',
+          path: ['signature'],
+        },
+      ]),
+    );
+  });
+
+  it('should not allow non-signature length hex strings', () => {
+    const updateMessageSignatureDto = updateMessageSignatureDtoBuilder()
+      .with(
+        'signature',
+        faker.string.hexadecimal({ length: 129 }) as `0x${string}`,
+      )
+      .build();
+
+    const result = UpdateMessageSignatureDtoSchema.safeParse(
+      updateMessageSignatureDto,
+    );
+
+    expect(!result.success && result.error).toStrictEqual(
+      new ZodError([
+        {
+          code: 'custom',
+          message: 'Invalid hex bytes',
+          path: ['signature'],
+        },
+        {
+          code: 'custom',
+          message: 'Invalid signature',
           path: ['signature'],
         },
       ]),

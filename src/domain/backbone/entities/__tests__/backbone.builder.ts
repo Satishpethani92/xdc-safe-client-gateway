@@ -1,7 +1,8 @@
 import { faker } from '@faker-js/faker';
-import { Builder, IBuilder } from '@/__tests__/builder';
+import type { IBuilder } from '@/__tests__/builder';
+import { Builder } from '@/__tests__/builder';
 import { fakeJson } from '@/__tests__/faker';
-import { Backbone } from '@/domain/backbone/entities/backbone.entity';
+import type { Backbone } from '@/domain/backbone/entities/backbone.entity';
 
 export function backboneBuilder(): IBuilder<Backbone> {
   return new Builder<Backbone>()
@@ -16,5 +17,5 @@ export function backboneBuilder(): IBuilder<Backbone> {
         faker.word.sample(),
       ),
     )
-    .with('settings', JSON.parse(fakeJson()));
+    .with('settings', JSON.parse(fakeJson()) as Record<string, unknown>);
 }

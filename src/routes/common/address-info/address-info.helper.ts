@@ -25,6 +25,10 @@ export class AddressInfoHelper {
    * The promise can be rejected if the address info cannot be retrieved for
    * any specified {@link source}
    *
+   * The function will try to get the address info from the provided sources
+   * in the order they are provided. If the address info cannot be retrieved
+   * from a source, the next source will be tried.
+   *
    * @param chainId - the chain id where the source exists
    * @param address - the address of the source to which we want to retrieve its metadata
    * @param sources - a collection of {@link Source} to which we want to retrieve its metadata
@@ -32,13 +36,13 @@ export class AddressInfoHelper {
 
   async get(
     chainId: string,
-    address: string,
-    sources: Source[],
+    address: `0x${string}`,
+    sources: Array<Source>,
   ): Promise<AddressInfo> {
     for (const source of sources) {
       try {
         return await this._getFromSource(chainId, address, source);
-      } catch (e) {
+      } catch {
         this.loggingService.debug(
           `Could not get address info with source=${source} for ${address}`,
         );
@@ -61,8 +65,8 @@ export class AddressInfoHelper {
    */
   getOrDefault(
     chainId: string,
-    address: string,
-    sources: Source[],
+    address: `0x${string}`,
+    sources: Array<Source>,
   ): Promise<AddressInfo> {
     return this.get(chainId, address, sources).catch(
       () => new AddressInfo(address),
@@ -78,8 +82,8 @@ export class AddressInfoHelper {
    */
   getCollection(
     chainId: string,
-    addresses: string[],
-    sources: Source[],
+    addresses: Array<`0x${string}`>,
+    sources: Array<Source>,
   ): Promise<Array<AddressInfo>> {
     return Promise.allSettled(
       addresses.map((address) => this.getOrDefault(chainId, address, sources)),
@@ -93,17 +97,17 @@ export class AddressInfoHelper {
 
   private _getFromSource(
     chainId: string,
-    address: string,
+    address: `0x${string}`,
     source: Source,
   ): Promise<AddressInfo> {
     switch (source) {
       case 'CONTRACT':
         return this.contractsRepository
           .getContract({ chainId, contractAddress: address })
-          .then(
-            (c) =>
-              new AddressInfo(c.address, c.displayName, c.logoUri ?? undefined),
-          );
+          .then((c) => {
+            const name = c.displayName || c.name;
+            return new AddressInfo(c.address, name, c.logoUri);
+          });
       case 'TOKEN':
         return this.tokenRepository
           .getToken({ chainId, address })

@@ -9,9 +9,15 @@ import {
 import { HttpErrorFactory } from '@/datasources/errors/http-error-factory';
 import { CoingeckoApi } from '@/datasources/balances-api/coingecko-api.service';
 import { IPricesApi } from '@/datasources/balances-api/prices-api.interface';
+import { ConfigApiModule } from '@/datasources/config-api/config-api.module';
+import { TransactionApiManagerModule } from '@/domain/interfaces/transaction-api.manager.interface';
 
 @Module({
-  imports: [CacheFirstDataSourceModule],
+  imports: [
+    CacheFirstDataSourceModule,
+    ConfigApiModule,
+    TransactionApiManagerModule,
+  ],
   providers: [
     HttpErrorFactory,
     { provide: IBalancesApiManager, useClass: BalancesApiManager },

@@ -5,9 +5,12 @@ import { IChainsRepository } from '@/domain/chains/chains.repository.interface';
 import { NativeCurrency } from '@/domain/chains/entities/native.currency.entity';
 import { Balance } from '@/routes/balances/entities/balance.entity';
 import { Balances } from '@/routes/balances/entities/balances.entity';
-import { TokenType } from '@/routes/balances/entities/token-type.entity';
+import {
+  NativeToken,
+  Erc20Token,
+} from '@/routes/balances/entities/token.entity';
 import { NULL_ADDRESS } from '@/routes/common/constants';
-import { orderBy } from 'lodash';
+import orderBy from 'lodash/orderBy';
 import { getNumberString } from '@/domain/common/utils/utils';
 
 @Injectable()
@@ -21,16 +24,19 @@ export class BalancesService {
 
   async getBalances(args: {
     chainId: string;
-    safeAddress: string;
+    safeAddress: `0x${string}`;
     fiatCode: string;
     trusted: boolean;
     excludeSpam: boolean;
   }): Promise<Balances> {
     const { chainId } = args;
-    const domainBalances = await this.balancesRepository.getBalances(args);
-    const { nativeCurrency } = await this.chainsRepository.getChain(chainId);
-    const balances: Balance[] = domainBalances.map((balance) =>
-      this._mapBalance(balance, nativeCurrency),
+    const chain = await this.chainsRepository.getChain(chainId);
+    const domainBalances = await this.balancesRepository.getBalances({
+      ...args,
+      chain,
+    });
+    const balances: Array<Balance> = domainBalances.map((balance) =>
+      this._mapBalance(balance, chain.nativeCurrency),
     );
     const fiatTotal = balances
       .filter((b) => b.fiatBalance !== null)
@@ -47,8 +53,8 @@ export class BalancesService {
     nativeCurrency: NativeCurrency,
   ): Balance {
     const tokenAddress = balance.tokenAddress;
-    const tokenType =
-      tokenAddress === null ? TokenType.NativeToken : TokenType.Erc20;
+    const tokenType: (NativeToken | Erc20Token)['type'] =
+      tokenAddress === null ? 'NATIVE_TOKEN' : 'ERC20';
 
     const tokenMetaData =
       tokenAddress === null
@@ -73,11 +79,12 @@ export class BalancesService {
       },
       balance: balance.balance,
       fiatBalance: balance.fiatBalance ?? '0',
+      fiatBalance24hChange: balance.fiatBalance24hChange,
       fiatConversion: balance.fiatConversion ?? '0',
     };
   }
 
-  async getSupportedFiatCodes(): Promise<string[]> {
+  async getSupportedFiatCodes(): Promise<Array<string>> {
     return this.balancesRepository.getFiatCodes();
   }
 }

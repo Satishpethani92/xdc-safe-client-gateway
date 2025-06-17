@@ -1,31 +1,36 @@
-import { Balance } from '@/domain/balances/entities/balance.entity';
-import { Collectible } from '@/domain/collectibles/entities/collectible.entity';
-import { Page } from '@/domain/entities/page.entity';
+import type { Balance } from '@/domain/balances/entities/balance.entity';
+import type { Chain } from '@/domain/chains/entities/chain.entity';
+import type { Collectible } from '@/domain/collectibles/entities/collectible.entity';
+import type { Page } from '@/domain/entities/page.entity';
+import type { Raw } from '@/validation/entities/raw.entity';
 
 export interface IBalancesApi {
   getBalances(args: {
-    safeAddress: string;
+    safeAddress: `0x${string}`;
     fiatCode: string;
-    chainId?: string;
+    chain: Chain;
     trusted?: boolean;
     excludeSpam?: boolean;
-  }): Promise<Balance[]>;
+  }): Promise<Raw<Array<Balance>>>;
 
-  clearBalances(args: { chainId: string; safeAddress: string }): Promise<void>;
+  clearBalances(args: {
+    chainId: string;
+    safeAddress: `0x${string}`;
+  }): Promise<void>;
 
   getCollectibles(args: {
-    safeAddress: string;
-    chainId?: string;
+    safeAddress: `0x${string}`;
+    chain: Chain;
     limit?: number;
     offset?: number;
     trusted?: boolean;
     excludeSpam?: boolean;
-  }): Promise<Page<Collectible>>;
+  }): Promise<Raw<Page<Collectible>>>;
 
   clearCollectibles(args: {
     chainId: string;
-    safeAddress: string;
+    safeAddress: `0x${string}`;
   }): Promise<void>;
 
-  getFiatCodes(): Promise<string[]>;
+  getFiatCodes(): Promise<Raw<Array<string>>>;
 }

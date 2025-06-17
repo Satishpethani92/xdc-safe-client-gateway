@@ -1,16 +1,16 @@
 import { faker } from '@faker-js/faker';
-import { IConfigurationService } from '@/config/configuration.service.interface';
-import { CacheFirstDataSource } from '@/datasources/cache/cache.first.data.source';
-import { ICacheService } from '@/datasources/cache/cache.service.interface';
+import type { IConfigurationService } from '@/config/configuration.service.interface';
+import type { CacheFirstDataSource } from '@/datasources/cache/cache.first.data.source';
+import type { ICacheService } from '@/datasources/cache/cache.service.interface';
 import { CacheDir } from '@/datasources/cache/entities/cache-dir.entity';
 import { HttpErrorFactory } from '@/datasources/errors/http-error-factory';
-import { INetworkService } from '@/datasources/network/network.service.interface';
+import type { INetworkService } from '@/datasources/network/network.service.interface';
 import { TransactionApi } from '@/datasources/transaction-api/transaction-api.service';
 import { backboneBuilder } from '@/domain/backbone/entities/__tests__/backbone.builder';
 import { DataSourceError } from '@/domain/errors/data-source.error';
 import { safeBuilder } from '@/domain/safe/entities/__tests__/safe.builder';
 import { NetworkResponseError } from '@/datasources/network/entities/network.error.entity';
-import { dataDecodedBuilder } from '@/domain/data-decoder/entities/__tests__/data-decoded.builder';
+import { dataDecodedBuilder } from '@/domain/data-decoder/v1/entities/__tests__/data-decoded.builder';
 import { singletonBuilder } from '@/domain/chains/entities/__tests__/singleton.builder';
 import { contractBuilder } from '@/domain/contracts/entities/__tests__/contract.builder';
 import { delegateBuilder } from '@/domain/delegate/entities/__tests__/delegate.builder';
@@ -22,8 +22,11 @@ import { tokenBuilder } from '@/domain/tokens/__tests__/token.builder';
 import { messageBuilder } from '@/domain/messages/entities/__tests__/message.builder';
 import { proposeTransactionDtoBuilder } from '@/routes/transactions/entities/__tests__/propose-transaction.dto.builder';
 import { erc20TransferBuilder } from '@/domain/safe/entities/__tests__/erc20-transfer.builder';
-import { DeviceType } from '@/domain/notifications/entities/device.entity';
 import { getAddress } from 'viem';
+import type { ILoggingService } from '@/logging/logging.interface';
+import { indexingStatusBuilder } from '@/domain/chains/entities/__tests__/indexing-status.builder';
+import { fakeJson } from '@/__tests__/faker';
+import { rawify } from '@/validation/entities/raw.entity';
 
 const dataSource = {
   get: jest.fn(),
@@ -32,7 +35,8 @@ const mockDataSource = jest.mocked(dataSource);
 
 const cacheService = {
   deleteByKey: jest.fn(),
-  set: jest.fn(),
+  hSet: jest.fn(),
+  hGet: jest.fn(),
 } as jest.MockedObjectDeep<ICacheService>;
 const mockCacheService = jest.mocked(cacheService);
 
@@ -48,12 +52,17 @@ const networkService = jest.mocked({
 } as jest.MockedObjectDeep<INetworkService>);
 const mockNetworkService = jest.mocked(networkService);
 
+const mockLoggingService = {
+  debug: jest.fn(),
+} as jest.MockedObjectDeep<ILoggingService>;
+
 describe('TransactionApi', () => {
   const chainId = '1';
   const baseUrl = faker.internet.url({ appendSlash: false });
   let httpErrorFactory: HttpErrorFactory;
   let service: TransactionApi;
   let defaultExpirationTimeInSeconds: number;
+  let indexingExpirationTimeInSeconds: number;
   let notFoundExpireTimeSeconds: number;
   let ownersTtlSeconds: number;
 
@@ -62,11 +71,15 @@ describe('TransactionApi', () => {
 
     httpErrorFactory = new HttpErrorFactory();
     defaultExpirationTimeInSeconds = faker.number.int();
+    indexingExpirationTimeInSeconds = faker.number.int();
     notFoundExpireTimeSeconds = faker.number.int();
     ownersTtlSeconds = faker.number.int();
     mockConfigurationService.getOrThrow.mockImplementation((key) => {
       if (key === 'expirationTimeInSeconds.default') {
         return defaultExpirationTimeInSeconds;
+      }
+      if (key === 'expirationTimeInSeconds.indexing') {
+        return indexingExpirationTimeInSeconds;
       }
       if (key === 'expirationTimeInSeconds.notFound.default') {
         return notFoundExpireTimeSeconds;
@@ -80,6 +93,10 @@ describe('TransactionApi', () => {
       if (key === 'owners.ownersTtlSeconds') {
         return ownersTtlSeconds;
       }
+      // TODO: Remove after Vault decoding has been released
+      if (key === 'application.isProduction') {
+        return true;
+      }
       throw Error(`Unexpected key: ${key}`);
     });
 
@@ -91,6 +108,7 @@ describe('TransactionApi', () => {
       mockConfigurationService,
       httpErrorFactory,
       mockNetworkService,
+      mockLoggingService,
     );
   });
 
@@ -102,7 +120,7 @@ describe('TransactionApi', () => {
       const decodedData = dataDecodedBuilder().build();
       networkService.post.mockResolvedValueOnce({
         status: 200,
-        data: decodedData,
+        data: rawify(decodedData),
       });
 
       const actual = await service.getDataDecoded({ data, to });
@@ -160,7 +178,7 @@ describe('TransactionApi', () => {
       const data = backboneBuilder().build();
       const getBackboneUrl = `${baseUrl}/api/v1/about`;
       const cacheDir = new CacheDir(`${chainId}_backbone`, '');
-      mockDataSource.get.mockResolvedValueOnce(data);
+      mockDataSource.get.mockResolvedValueOnce(rawify(data));
 
       const actual = await service.getBackbone();
 
@@ -212,7 +230,7 @@ describe('TransactionApi', () => {
       const singletons = [singletonBuilder().build()];
       const getSingletonsUrl = `${baseUrl}/api/v1/about/singletons/`;
       const cacheDir = new CacheDir(`${chainId}_singletons`, '');
-      mockDataSource.get.mockResolvedValueOnce(singletons);
+      mockDataSource.get.mockResolvedValueOnce(rawify(singletons));
 
       const actual = await service.getSingletons();
 
@@ -259,12 +277,63 @@ describe('TransactionApi', () => {
     });
   });
 
+  describe('getIndexingStatus', () => {
+    it('should return the indexing status received', async () => {
+      const indexingStatus = indexingStatusBuilder().build();
+      const getIndexingStatusUrl = `${baseUrl}/api/v1/about/indexing/`;
+      const cacheDir = new CacheDir(`${chainId}_indexing`, '');
+      mockDataSource.get.mockResolvedValueOnce(rawify(indexingStatus));
+
+      const actual = await service.getIndexingStatus();
+
+      expect(actual).toBe(indexingStatus);
+      expect(mockDataSource.get).toHaveBeenCalledTimes(1);
+      expect(mockDataSource.get).toHaveBeenCalledWith({
+        cacheDir,
+        expireTimeSeconds: indexingExpirationTimeInSeconds,
+        notFoundExpireTimeSeconds: notFoundExpireTimeSeconds,
+        url: getIndexingStatusUrl,
+      });
+    });
+
+    const errorMessage = faker.word.words();
+    it.each([
+      ['Transaction Service', { nonFieldErrors: [errorMessage] }],
+      ['standard', new Error(errorMessage)],
+    ])(`should forward a %s error`, async (_, error) => {
+      const getIndexingStatusUrl = `${baseUrl}/api/v1/about/indexing/`;
+      const statusCode = faker.internet.httpStatusCode({
+        types: ['clientError', 'serverError'],
+      });
+      const expected = new DataSourceError(errorMessage, statusCode);
+      const cacheDir = new CacheDir(`${chainId}_indexing`, '');
+      mockDataSource.get.mockRejectedValueOnce(
+        new NetworkResponseError(
+          new URL(getIndexingStatusUrl),
+          {
+            status: statusCode,
+          } as Response,
+          error,
+        ),
+      );
+      await expect(service.getIndexingStatus()).rejects.toThrow(expected);
+
+      expect(mockDataSource.get).toHaveBeenCalledTimes(1);
+      expect(mockDataSource.get).toHaveBeenCalledWith({
+        cacheDir,
+        expireTimeSeconds: indexingExpirationTimeInSeconds,
+        notFoundExpireTimeSeconds: notFoundExpireTimeSeconds,
+        url: getIndexingStatusUrl,
+      });
+    });
+  });
+
   describe('getSafe', () => {
     it('should return retrieved safe', async () => {
       const safe = safeBuilder().build();
       const getSafeUrl = `${baseUrl}/api/v1/safes/${safe.address}`;
       const cacheDir = new CacheDir(`${chainId}_safe_${safe.address}`, '');
-      mockDataSource.get.mockResolvedValueOnce(safe);
+      mockDataSource.get.mockResolvedValueOnce(rawify(safe));
 
       const actual = await service.getSafe(safe.address);
 
@@ -314,7 +383,7 @@ describe('TransactionApi', () => {
 
   describe('clearSafe', () => {
     it('should clear the Safe cache', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
 
       await service.clearSafe(safeAddress);
 
@@ -322,6 +391,242 @@ describe('TransactionApi', () => {
       expect(mockCacheService.deleteByKey).toHaveBeenCalledWith(
         `${chainId}_safe_${safeAddress}`,
       );
+    });
+  });
+
+  describe('isSafe', () => {
+    it('should return whether Safe exists', async () => {
+      const safe = safeBuilder().build();
+      const cacheDir = new CacheDir(
+        `${chainId}_safe_exists_${safe.address}`,
+        '',
+      );
+      cacheService.hGet.mockResolvedValueOnce(undefined);
+      networkService.get.mockResolvedValueOnce({
+        status: 200,
+        data: rawify(safe),
+      });
+
+      const actual = await service.isSafe(safe.address);
+
+      expect(actual).toBe(true);
+      expect(cacheService.hGet).toHaveBeenCalledTimes(1);
+      expect(cacheService.hGet).toHaveBeenCalledWith(cacheDir);
+      expect(networkService.get).toHaveBeenCalledTimes(1);
+      expect(networkService.get).toHaveBeenCalledWith({
+        url: `${baseUrl}/api/v1/safes/${safe.address}`,
+      });
+      expect(cacheService.hSet).toHaveBeenCalledTimes(1);
+      expect(cacheService.hSet).toHaveBeenCalledWith(
+        cacheDir,
+        'true',
+        Number.MAX_SAFE_INTEGER - 1,
+      );
+    });
+
+    it('should return the cached value', async () => {
+      const safe = safeBuilder().build();
+      const cacheDir = new CacheDir(
+        `${chainId}_safe_exists_${safe.address}`,
+        '',
+      );
+      const isSafe = faker.datatype.boolean();
+      cacheService.hGet.mockResolvedValueOnce(JSON.stringify(isSafe));
+      networkService.get.mockResolvedValueOnce({
+        status: 200,
+        data: rawify(safe),
+      });
+
+      const actual = await service.isSafe(safe.address);
+
+      expect(actual).toBe(isSafe);
+      expect(cacheService.hGet).toHaveBeenCalledTimes(1);
+      expect(cacheService.hGet).toHaveBeenCalledWith(cacheDir);
+      expect(networkService.get).not.toHaveBeenCalled();
+      expect(cacheService.hSet).not.toHaveBeenCalledTimes(1);
+    });
+
+    it('should return false if Safe does not exist', async () => {
+      const safe = safeBuilder().build();
+      const cacheDir = new CacheDir(
+        `${chainId}_safe_exists_${safe.address}`,
+        '',
+      );
+      cacheService.hGet.mockResolvedValueOnce(undefined);
+      networkService.get.mockResolvedValueOnce({
+        status: 404,
+        data: rawify(null),
+      });
+
+      const actual = await service.isSafe(safe.address);
+
+      expect(actual).toBe(false);
+      expect(cacheService.hGet).toHaveBeenCalledTimes(1);
+      expect(cacheService.hGet).toHaveBeenCalledWith(cacheDir);
+      expect(networkService.get).toHaveBeenCalledTimes(1);
+      expect(networkService.get).toHaveBeenCalledWith({
+        url: `${baseUrl}/api/v1/safes/${safe.address}`,
+      });
+      expect(cacheService.hSet).toHaveBeenCalledTimes(1);
+      expect(cacheService.hSet).toHaveBeenCalledWith(
+        cacheDir,
+        'false',
+        defaultExpirationTimeInSeconds,
+      );
+    });
+
+    const errorMessage = faker.word.words();
+    it.each([
+      ['Transaction Service', { nonFieldErrors: [errorMessage] }],
+      ['standard', new Error(errorMessage)],
+    ])(`should forward a %s error`, async (_, error) => {
+      const safe = safeBuilder().build();
+      const getSafeUrl = `${baseUrl}/api/v1/safes/${safe.address}`;
+      const statusCode = faker.internet.httpStatusCode({
+        types: ['serverError'],
+      });
+      const expected = new DataSourceError(errorMessage, statusCode);
+      const cacheDir = new CacheDir(
+        `${chainId}_safe_exists_${safe.address}`,
+        '',
+      );
+      cacheService.hGet.mockResolvedValueOnce(undefined);
+      networkService.get.mockRejectedValueOnce(
+        new NetworkResponseError(
+          new URL(getSafeUrl),
+          {
+            status: statusCode,
+          } as Response,
+          error,
+        ),
+      );
+
+      await expect(service.isSafe(safe.address)).rejects.toThrow(expected);
+
+      expect(cacheService.hGet).toHaveBeenCalledTimes(1);
+      expect(cacheService.hGet).toHaveBeenCalledWith(cacheDir);
+      expect(networkService.get).toHaveBeenCalledTimes(1);
+      expect(networkService.get).toHaveBeenCalledWith({
+        url: `${baseUrl}/api/v1/safes/${safe.address}`,
+      });
+      expect(cacheService.hSet).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('clearIsSafe', () => {
+    it('should clear the Safe existence cache', async () => {
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
+
+      await service.clearIsSafe(safeAddress);
+
+      expect(mockCacheService.deleteByKey).toHaveBeenCalledTimes(1);
+      expect(mockCacheService.deleteByKey).toHaveBeenCalledWith(
+        `${chainId}_safe_exists_${safeAddress}`,
+      );
+    });
+  });
+
+  describe('getTrustedForDelegateCallContracts', () => {
+    it('should return the trusted for delegate call contracts received', async () => {
+      const contractPage = pageBuilder()
+        .with('results', [
+          contractBuilder().with('trustedForDelegateCall', true).build(),
+          contractBuilder().with('trustedForDelegateCall', true).build(),
+        ])
+        .build();
+      const getTrustedForDelegateCallContractsUrl = `${baseUrl}/api/v1/contracts/`;
+      const cacheDir = new CacheDir(`${chainId}_trusted_contracts`, '');
+      mockDataSource.get.mockResolvedValueOnce(rawify(contractPage));
+
+      const actual = await service.getTrustedForDelegateCallContracts({});
+
+      expect(actual).toBe(contractPage);
+      expect(mockDataSource.get).toHaveBeenCalledTimes(1);
+      expect(mockDataSource.get).toHaveBeenCalledWith({
+        cacheDir,
+        url: getTrustedForDelegateCallContractsUrl,
+        notFoundExpireTimeSeconds: notFoundExpireTimeSeconds,
+        expireTimeSeconds: defaultExpirationTimeInSeconds,
+        networkRequest: {
+          params: {
+            trusted_for_delegate_call: true,
+          },
+        },
+      });
+    });
+
+    it('should relay pagination', async () => {
+      const contractPage = pageBuilder()
+        .with('results', [
+          contractBuilder().with('trustedForDelegateCall', true).build(),
+          contractBuilder().with('trustedForDelegateCall', true).build(),
+        ])
+        .build();
+      const getTrustedForDelegateCallContractsUrl = `${baseUrl}/api/v1/contracts/`;
+      const cacheDir = new CacheDir(`${chainId}_trusted_contracts`, '');
+      mockDataSource.get.mockResolvedValueOnce(rawify(contractPage));
+      const limit = faker.number.int();
+      const offset = faker.number.int();
+
+      const actual = await service.getTrustedForDelegateCallContracts({
+        limit,
+        offset,
+      });
+
+      expect(actual).toBe(contractPage);
+      expect(mockDataSource.get).toHaveBeenCalledTimes(1);
+      expect(mockDataSource.get).toHaveBeenCalledWith({
+        cacheDir,
+        url: getTrustedForDelegateCallContractsUrl,
+        notFoundExpireTimeSeconds: notFoundExpireTimeSeconds,
+        expireTimeSeconds: defaultExpirationTimeInSeconds,
+        networkRequest: {
+          params: {
+            trusted_for_delegate_call: true,
+            limit,
+            offset,
+          },
+        },
+      });
+    });
+
+    const errorMessage = faker.word.words();
+    it.each([
+      ['Transaction Service', { nonFieldErrors: [errorMessage] }],
+      ['standard', new Error(errorMessage)],
+    ])(`should forward a %s error`, async (_, error) => {
+      const getTrustedForDelegateCallContractsUrl = `${baseUrl}/api/v1/contracts/`;
+      const statusCode = faker.internet.httpStatusCode({
+        types: ['clientError', 'serverError'],
+      });
+      const expected = new DataSourceError(errorMessage, statusCode);
+      const cacheDir = new CacheDir(`${chainId}_trusted_contracts`, '');
+      mockDataSource.get.mockRejectedValueOnce(
+        new NetworkResponseError(
+          new URL(getTrustedForDelegateCallContractsUrl),
+          {
+            status: statusCode,
+          } as Response,
+          error,
+        ),
+      );
+
+      await expect(
+        service.getTrustedForDelegateCallContracts({}),
+      ).rejects.toThrow(expected);
+
+      expect(mockDataSource.get).toHaveBeenCalledTimes(1);
+      expect(mockDataSource.get).toHaveBeenCalledWith({
+        cacheDir,
+        url: getTrustedForDelegateCallContractsUrl,
+        notFoundExpireTimeSeconds: notFoundExpireTimeSeconds,
+        expireTimeSeconds: defaultExpirationTimeInSeconds,
+        networkRequest: {
+          params: {
+            trusted_for_delegate_call: true,
+          },
+        },
+      });
     });
   });
 
@@ -333,7 +638,7 @@ describe('TransactionApi', () => {
         `${chainId}_contract_${contract.address}`,
         '',
       );
-      mockDataSource.get.mockResolvedValueOnce(contract);
+      mockDataSource.get.mockResolvedValueOnce(rawify(contract));
 
       const actual = await service.getContract(contract.address);
 
@@ -352,7 +657,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const contract = faker.finance.ethereumAddress();
+      const contract = getAddress(faker.finance.ethereumAddress());
       const getContractUrl = `${baseUrl}/api/v1/contracts/${contract}`;
       const statusCode = faker.internet.httpStatusCode({
         types: ['clientError', 'serverError'],
@@ -392,7 +697,7 @@ describe('TransactionApi', () => {
         `${chainId}_delegates_${delegate.safe}`,
         `${delegate.delegate}_${delegate.delegator}_${delegate.label}_${limit}_${offset}`,
       );
-      mockDataSource.get.mockResolvedValueOnce(delegatesPage);
+      mockDataSource.get.mockResolvedValueOnce(rawify(delegatesPage));
 
       const actual = await service.getDelegates({
         ...delegate,
@@ -476,7 +781,7 @@ describe('TransactionApi', () => {
       const postDelegateUrl = `${baseUrl}/api/v1/delegates/`;
       networkService.post.mockResolvedValueOnce({
         status: 200,
-        data: {},
+        data: rawify({}),
       });
 
       await service.postDelegate({
@@ -543,7 +848,7 @@ describe('TransactionApi', () => {
       const deleteDelegateUrl = `${baseUrl}/api/v1/delegates/${delegate.delegate}`;
       networkService.delete.mockResolvedValueOnce({
         status: 200,
-        data: {},
+        data: rawify({}),
       });
 
       await service.deleteDelegate({
@@ -612,7 +917,7 @@ describe('TransactionApi', () => {
       const deleteSafeDelegateUrl = `${baseUrl}/api/v1/safes/${delegate.safe}/delegates/${delegate.delegate}`;
       networkService.delete.mockResolvedValueOnce({
         status: 200,
-        data: {},
+        data: rawify({}),
       });
 
       await service.deleteSafeDelegate({
@@ -684,7 +989,7 @@ describe('TransactionApi', () => {
       );
       networkService.get.mockResolvedValueOnce({
         status: 200,
-        data: transfer,
+        data: rawify(transfer),
       });
 
       const actual = await service.getTransfer(transfer.transferId);
@@ -735,7 +1040,7 @@ describe('TransactionApi', () => {
 
   describe('getTransfers', () => {
     it('should return the transfers retrieved', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const onlyErc20 = faker.datatype.boolean();
       const onlyErc721 = faker.datatype.boolean();
       const limit = faker.number.int();
@@ -749,7 +1054,7 @@ describe('TransactionApi', () => {
       );
       networkService.get.mockResolvedValueOnce({
         status: 200,
-        data: transfersPage,
+        data: rawify(transfersPage),
       });
 
       const actual = await service.getTransfers({
@@ -783,7 +1088,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const onlyErc20 = faker.datatype.boolean();
       const onlyErc721 = faker.datatype.boolean();
       const limit = faker.number.int();
@@ -837,7 +1142,7 @@ describe('TransactionApi', () => {
 
   describe('clearTransfers', () => {
     it('should clear the transfers cache', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
 
       await service.clearTransfers(safeAddress);
 
@@ -850,16 +1155,17 @@ describe('TransactionApi', () => {
 
   describe('getIncomingTransfers', () => {
     it('should return the incoming transfers retrieved', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const executionDateGte = faker.date.recent().toISOString();
       const executionDateLte = faker.date.recent().toISOString();
-      const to = faker.finance.ethereumAddress();
+      const to = getAddress(faker.finance.ethereumAddress());
       const value = faker.string.numeric();
-      const tokenAddress = faker.finance.ethereumAddress();
+      const tokenAddress = getAddress(faker.finance.ethereumAddress());
+      const txHash = faker.string.hexadecimal();
       const limit = faker.number.int();
       const offset = faker.number.int();
       const incomingTransfer = erc20TransferBuilder()
-        .with('to', safeAddress)
+        .with('to', getAddress(safeAddress))
         .build();
       const incomingTransfersPage = pageBuilder()
         .with('results', [incomingTransfer])
@@ -867,11 +1173,11 @@ describe('TransactionApi', () => {
       const getIncomingTransfersUrl = `${baseUrl}/api/v1/safes/${safeAddress}/incoming-transfers/`;
       const cacheDir = new CacheDir(
         `${chainId}_incoming_transfers_${safeAddress}`,
-        `${executionDateGte}_${executionDateLte}_${to}_${value}_${tokenAddress}_${limit}_${offset}`,
+        `${executionDateGte}_${executionDateLte}_${to}_${value}_${tokenAddress}_${txHash}_${limit}_${offset}`,
       );
       networkService.get.mockResolvedValueOnce({
         status: 200,
-        data: incomingTransfersPage,
+        data: rawify(incomingTransfersPage),
       });
 
       const actual = await service.getIncomingTransfers({
@@ -883,6 +1189,7 @@ describe('TransactionApi', () => {
         tokenAddress,
         limit,
         offset,
+        txHash,
       });
 
       expect(actual).toBe(actual);
@@ -901,6 +1208,7 @@ describe('TransactionApi', () => {
             token_address: tokenAddress,
             limit,
             offset,
+            transaction_hash: txHash,
           },
         },
       });
@@ -911,12 +1219,13 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const executionDateGte = faker.date.recent().toISOString();
       const executionDateLte = faker.date.recent().toISOString();
-      const to = faker.finance.ethereumAddress();
+      const to = getAddress(faker.finance.ethereumAddress());
       const value = faker.string.numeric();
-      const tokenAddress = faker.finance.ethereumAddress();
+      const tokenAddress = getAddress(faker.finance.ethereumAddress());
+      const txHash = faker.string.hexadecimal();
       const limit = faker.number.int();
       const offset = faker.number.int();
       const getIncomingTransfersUrl = `${baseUrl}/api/v1/safes/${safeAddress}/incoming-transfers/`;
@@ -926,7 +1235,7 @@ describe('TransactionApi', () => {
       const expected = new DataSourceError(errorMessage, statusCode);
       const cacheDir = new CacheDir(
         `${chainId}_incoming_transfers_${safeAddress}`,
-        `${executionDateGte}_${executionDateLte}_${to}_${value}_${tokenAddress}_${limit}_${offset}`,
+        `${executionDateGte}_${executionDateLte}_${to}_${value}_${tokenAddress}_${txHash}_${limit}_${offset}`,
       );
       mockDataSource.get.mockRejectedValueOnce(
         new NetworkResponseError(
@@ -946,6 +1255,7 @@ describe('TransactionApi', () => {
           to,
           value,
           tokenAddress,
+          txHash,
           limit,
           offset,
         }),
@@ -964,6 +1274,7 @@ describe('TransactionApi', () => {
             to,
             value,
             token_address: tokenAddress,
+            transaction_hash: txHash,
             limit,
             offset,
           },
@@ -974,7 +1285,7 @@ describe('TransactionApi', () => {
 
   describe('clearIncomingTransfers', () => {
     it('should clear the incoming transfers cache', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
 
       await service.clearIncomingTransfers(safeAddress);
 
@@ -988,23 +1299,25 @@ describe('TransactionApi', () => {
   describe('postConfirmation', () => {
     it('should post confirmation', async () => {
       const safeTxHash = faker.string.hexadecimal();
-      const signedSafeTxHash = faker.string.hexadecimal();
+      const signature = faker.string.hexadecimal({
+        length: 130,
+      }) as `0x${string}`;
       const postConfirmationUrl = `${baseUrl}/api/v1/multisig-transactions/${safeTxHash}/confirmations/`;
       networkService.post.mockResolvedValueOnce({
         status: 200,
-        data: {},
+        data: rawify({}),
       });
 
       await service.postConfirmation({
         safeTxHash,
-        addConfirmationDto: { signedSafeTxHash },
+        addConfirmationDto: { signature },
       });
 
       expect(networkService.post).toHaveBeenCalledTimes(1);
       expect(networkService.post).toHaveBeenCalledWith({
         url: postConfirmationUrl,
         data: {
-          signature: signedSafeTxHash,
+          signature,
         },
       });
     });
@@ -1015,7 +1328,9 @@ describe('TransactionApi', () => {
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
       const safeTxHash = faker.string.hexadecimal();
-      const signedSafeTxHash = faker.string.hexadecimal();
+      const signature = faker.string.hexadecimal({
+        length: 130,
+      }) as `0x${string}`;
       const postConfirmationUrl = `${baseUrl}/api/v1/multisig-transactions/${safeTxHash}/confirmations/`;
       const statusCode = faker.internet.httpStatusCode({
         types: ['clientError', 'serverError'],
@@ -1034,7 +1349,7 @@ describe('TransactionApi', () => {
       await expect(
         service.postConfirmation({
           safeTxHash,
-          addConfirmationDto: { signedSafeTxHash },
+          addConfirmationDto: { signature },
         }),
       ).rejects.toThrow(expected);
 
@@ -1042,7 +1357,7 @@ describe('TransactionApi', () => {
       expect(networkService.post).toHaveBeenCalledWith({
         url: postConfirmationUrl,
         data: {
-          signature: signedSafeTxHash,
+          signature,
         },
       });
     });
@@ -1050,7 +1365,7 @@ describe('TransactionApi', () => {
 
   describe('getSafesByModules', () => {
     it('should return Safes with module enabled', async () => {
-      const moduleAddress = faker.finance.ethereumAddress();
+      const moduleAddress = getAddress(faker.finance.ethereumAddress());
       const safesByModule = {
         safes: [
           faker.finance.ethereumAddress(),
@@ -1059,7 +1374,7 @@ describe('TransactionApi', () => {
       };
       const getSafesByModuleUrl = `${baseUrl}/api/v1/modules/${moduleAddress}/safes/`;
       mockNetworkService.get.mockResolvedValueOnce({
-        data: safesByModule,
+        data: rawify(safesByModule),
         status: 200,
       });
 
@@ -1077,7 +1392,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const moduleAddress = faker.finance.ethereumAddress();
+      const moduleAddress = getAddress(faker.finance.ethereumAddress());
       const getSafesByModuleUrl = `${baseUrl}/api/v1/modules/${moduleAddress}/safes/`;
       const statusCode = faker.internet.httpStatusCode({
         types: ['clientError', 'serverError'],
@@ -1113,7 +1428,7 @@ describe('TransactionApi', () => {
         `${chainId}_module_transaction_${moduleTransactionId}`,
         '',
       );
-      mockDataSource.get.mockResolvedValueOnce(moduleTransaction);
+      mockDataSource.get.mockResolvedValueOnce(rawify(moduleTransaction));
 
       const actual = await service.getModuleTransaction(moduleTransactionId);
 
@@ -1177,14 +1492,15 @@ describe('TransactionApi', () => {
       const getModuleTransactionsUrl = `${baseUrl}/api/v1/safes/${moduleTransaction.safe}/module-transactions/`;
       const cacheDir = new CacheDir(
         `${chainId}_module_transactions_${moduleTransaction.safe}`,
-        `${moduleTransaction.to}_${moduleTransaction.module}_${limit}_${offset}`,
+        `${moduleTransaction.to}_${moduleTransaction.module}_${moduleTransaction.transactionHash}_${limit}_${offset}`,
       );
-      mockDataSource.get.mockResolvedValueOnce(moduleTransactionsPage);
+      mockDataSource.get.mockResolvedValueOnce(rawify(moduleTransactionsPage));
 
       const actual = await service.getModuleTransactions({
         safeAddress: moduleTransaction.safe,
         to: moduleTransaction.to,
         module: moduleTransaction.module,
+        txHash: moduleTransaction.transactionHash,
         limit,
         offset,
       });
@@ -1200,6 +1516,7 @@ describe('TransactionApi', () => {
           params: {
             to: moduleTransaction.to,
             module: moduleTransaction.module,
+            transaction_hash: moduleTransaction.transactionHash,
             limit,
             offset,
           },
@@ -1222,7 +1539,7 @@ describe('TransactionApi', () => {
       const expected = new DataSourceError(errorMessage, statusCode);
       const cacheDir = new CacheDir(
         `${chainId}_module_transactions_${moduleTransaction.safe}`,
-        `${moduleTransaction.to}_${moduleTransaction.module}_${limit}_${offset}`,
+        `${moduleTransaction.to}_${moduleTransaction.module}_${moduleTransaction.transactionHash}_${limit}_${offset}`,
       );
       mockDataSource.get.mockRejectedValueOnce(
         new NetworkResponseError(
@@ -1239,6 +1556,7 @@ describe('TransactionApi', () => {
           safeAddress: moduleTransaction.safe,
           to: moduleTransaction.to,
           module: moduleTransaction.module,
+          txHash: moduleTransaction.transactionHash,
           limit,
           offset,
         }),
@@ -1254,6 +1572,7 @@ describe('TransactionApi', () => {
           params: {
             to: moduleTransaction.to,
             module: moduleTransaction.module,
+            transaction_hash: moduleTransaction.transactionHash,
             limit,
             offset,
           },
@@ -1264,7 +1583,7 @@ describe('TransactionApi', () => {
 
   describe('clearModuleTransactions', () => {
     it('should clear the module transactions cache', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
 
       await service.clearModuleTransactions(safeAddress);
 
@@ -1291,7 +1610,9 @@ describe('TransactionApi', () => {
         `${chainId}_multisig_transactions_${multisigTransaction.safe}`,
         `${ordering}_${multisigTransaction.isExecuted}_${multisigTransaction.trusted}_${executedDateGte}_${executedDateLte}_${multisigTransaction.to}_${multisigTransaction.value}_${multisigTransaction.nonce}_${multisigTransaction.nonce}_${limit}_${offset}`,
       );
-      mockDataSource.get.mockResolvedValueOnce(multisigTransactionsPage);
+      mockDataSource.get.mockResolvedValueOnce(
+        rawify(multisigTransactionsPage),
+      );
 
       const actual = await service.getMultisigTransactions({
         safeAddress: multisigTransaction.safe,
@@ -1308,7 +1629,7 @@ describe('TransactionApi', () => {
         offset,
       });
 
-      expect(actual).toBe(multisigTransactionsPage);
+      expect(actual).toStrictEqual(multisigTransactionsPage);
       expect(mockDataSource.get).toHaveBeenCalledTimes(1);
       expect(mockDataSource.get).toHaveBeenCalledWith({
         cacheDir,
@@ -1409,7 +1730,7 @@ describe('TransactionApi', () => {
 
   describe('clearMultisigTransactions', () => {
     it('should clear the multisig transactions cache', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
 
       await service.clearMultisigTransactions(safeAddress);
 
@@ -1428,7 +1749,7 @@ describe('TransactionApi', () => {
         `${chainId}_multisig_transaction_${multisigTransaction.safeTxHash}`,
         '',
       );
-      mockDataSource.get.mockResolvedValueOnce(multisigTransaction);
+      mockDataSource.get.mockResolvedValueOnce(rawify(multisigTransaction));
 
       const actual = await service.getMultisigTransaction(
         multisigTransaction.safeTxHash,
@@ -1487,10 +1808,10 @@ describe('TransactionApi', () => {
     it('should delete a transaction', async () => {
       const safeTxHash = faker.string.hexadecimal();
       const signature = faker.string.hexadecimal();
-      const deleteTransactionUrl = `${baseUrl}/api/v1/transactions/${safeTxHash}`;
+      const deleteTransactionUrl = `${baseUrl}/api/v1/multisig-transactions/${safeTxHash}`;
       networkService.delete.mockResolvedValueOnce({
         status: 200,
-        data: {},
+        data: rawify({}),
       });
 
       await service.deleteTransaction({
@@ -1514,7 +1835,7 @@ describe('TransactionApi', () => {
     ])(`should forward a %s error`, async (_, error) => {
       const safeTxHash = faker.string.hexadecimal();
       const signature = faker.string.hexadecimal();
-      const deleteTransactionUrl = `${baseUrl}/api/v1/transactions/${safeTxHash}`;
+      const deleteTransactionUrl = `${baseUrl}/api/v1/multisig-transactions/${safeTxHash}`;
       const statusCode = faker.internet.httpStatusCode({
         types: ['clientError', 'serverError'],
       });
@@ -1561,14 +1882,14 @@ describe('TransactionApi', () => {
 
   describe('getCreationTransaction', () => {
     it('should return the creation transaction retrieved', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const creationTransaction = creationTransactionBuilder().build();
       const getCreationTransactionUrl = `${baseUrl}/api/v1/safes/${safeAddress}/creation/`;
       const cacheDir = new CacheDir(
         `${chainId}_creation_transaction_${safeAddress}`,
         '',
       );
-      mockDataSource.get.mockResolvedValueOnce(creationTransaction);
+      mockDataSource.get.mockResolvedValueOnce(rawify(creationTransaction));
 
       const actual = await service.getCreationTransaction(safeAddress);
 
@@ -1587,7 +1908,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const getCreationTransactionUrl = `${baseUrl}/api/v1/safes/${safeAddress}/creation/`;
       const statusCode = faker.internet.httpStatusCode({
         types: ['clientError', 'serverError'],
@@ -1623,7 +1944,7 @@ describe('TransactionApi', () => {
 
   describe('getAllTransactions', () => {
     it('should return all transactions retrieved', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const ordering = faker.word.noun();
       const executed = faker.datatype.boolean();
       const queued = faker.datatype.boolean();
@@ -1639,7 +1960,7 @@ describe('TransactionApi', () => {
         `${chainId}_all_transactions_${safeAddress}`,
         `${ordering}_${executed}_${queued}_${limit}_${offset}`,
       );
-      mockDataSource.get.mockResolvedValueOnce(allTransactionsPage);
+      mockDataSource.get.mockResolvedValueOnce(rawify(allTransactionsPage));
 
       const actual = await service.getAllTransactions({
         safeAddress,
@@ -1650,7 +1971,7 @@ describe('TransactionApi', () => {
         offset,
       });
 
-      expect(actual).toBe(allTransactionsPage);
+      expect(actual).toStrictEqual(allTransactionsPage);
       expect(mockDataSource.get).toHaveBeenCalledTimes(1);
       expect(mockDataSource.get).toHaveBeenCalledWith({
         cacheDir,
@@ -1675,7 +1996,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const ordering = faker.word.noun();
       const executed = faker.datatype.boolean();
       const queued = faker.datatype.boolean();
@@ -1733,7 +2054,7 @@ describe('TransactionApi', () => {
 
   describe('clearAllTransactions', () => {
     it('should clear the all transactions cache', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
 
       await service.clearAllTransactions(safeAddress);
 
@@ -1749,7 +2070,7 @@ describe('TransactionApi', () => {
       const token = tokenBuilder().build();
       const getTokenUrl = `${baseUrl}/api/v1/tokens/${token.address}`;
       const cacheDir = new CacheDir(`${chainId}_token_${token.address}`, '');
-      mockDataSource.get.mockResolvedValueOnce(token);
+      mockDataSource.get.mockResolvedValueOnce(rawify(token));
 
       const actual = await service.getToken(token.address);
 
@@ -1805,7 +2126,7 @@ describe('TransactionApi', () => {
       const offset = faker.number.int();
       const getTokensUrl = `${baseUrl}/api/v1/tokens/`;
       const cacheDir = new CacheDir(`${chainId}_tokens`, `${limit}_${offset}`);
-      mockDataSource.get.mockResolvedValueOnce(tokensPage);
+      mockDataSource.get.mockResolvedValueOnce(rawify(tokensPage));
 
       const actual = await service.getTokens({
         limit,
@@ -1876,7 +2197,7 @@ describe('TransactionApi', () => {
 
   describe('getSafesByOwner', () => {
     it('should return retrieved safe', async () => {
-      const owner = faker.finance.ethereumAddress();
+      const owner = getAddress(faker.finance.ethereumAddress());
       const safeList = {
         safes: [
           faker.finance.ethereumAddress(),
@@ -1885,7 +2206,7 @@ describe('TransactionApi', () => {
       };
       const getSafesByOwnerUrl = `${baseUrl}/api/v1/owners/${owner}/safes/`;
       const cacheDir = new CacheDir(`${chainId}_owner_safes_${owner}`, '');
-      mockDataSource.get.mockResolvedValueOnce(safeList);
+      mockDataSource.get.mockResolvedValueOnce(rawify(safeList));
 
       const actual = await service.getSafesByOwner(owner);
 
@@ -1904,7 +2225,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const owner = faker.finance.ethereumAddress();
+      const owner = getAddress(faker.finance.ethereumAddress());
       const getSafesByOwnerUrl = `${baseUrl}/api/v1/owners/${owner}/safes/`;
       const statusCode = faker.internet.httpStatusCode({
         types: ['clientError', 'serverError'],
@@ -1933,190 +2254,9 @@ describe('TransactionApi', () => {
     });
   });
 
-  describe('postDeviceRegistration', () => {
-    it('should post device registration', async () => {
-      const device = {
-        uuid: faker.string.uuid(),
-        cloudMessagingToken: faker.string.uuid(),
-        buildNumber: faker.system.semver(),
-        deviceType: faker.helpers.arrayElement(Object.values(DeviceType)),
-        version: faker.system.semver(),
-        timestamp: faker.date.recent().toISOString(),
-        bundle: faker.word.noun(),
-      };
-      const safes = [
-        faker.finance.ethereumAddress(),
-        faker.finance.ethereumAddress(),
-      ];
-      const signatures = [
-        faker.string.hexadecimal(),
-        faker.string.hexadecimal(),
-      ];
-      const postDeviceRegistrationUrl = `${baseUrl}/api/v1/notifications/devices/`;
-      networkService.post.mockResolvedValueOnce({
-        status: 200,
-        data: {},
-      });
-
-      await service.postDeviceRegistration({
-        device,
-        safes,
-        signatures,
-      });
-
-      expect(networkService.post).toHaveBeenCalledTimes(1);
-      expect(networkService.post).toHaveBeenCalledWith({
-        url: postDeviceRegistrationUrl,
-        data: {
-          ...device,
-          safes,
-          signatures,
-        },
-      });
-    });
-
-    const errorMessage = faker.word.words();
-    it.each([
-      ['Transaction Service', { nonFieldErrors: [errorMessage] }],
-      ['standard', new Error(errorMessage)],
-    ])(`should forward a %s error`, async (_, error) => {
-      const safeTxHash = faker.string.hexadecimal();
-      const signedSafeTxHash = faker.string.hexadecimal();
-      const postConfirmationUrl = `${baseUrl}/api/v1/multisig-transactions/${safeTxHash}/confirmations/`;
-      const statusCode = faker.internet.httpStatusCode({
-        types: ['clientError', 'serverError'],
-      });
-      const expected = new DataSourceError(errorMessage, statusCode);
-      networkService.post.mockRejectedValueOnce(
-        new NetworkResponseError(
-          new URL(postConfirmationUrl),
-          {
-            status: statusCode,
-          } as Response,
-          error,
-        ),
-      );
-
-      await expect(
-        service.postConfirmation({
-          safeTxHash,
-          addConfirmationDto: { signedSafeTxHash },
-        }),
-      ).rejects.toThrow(expected);
-
-      expect(networkService.post).toHaveBeenCalledTimes(1);
-      expect(networkService.post).toHaveBeenCalledWith({
-        url: postConfirmationUrl,
-        data: {
-          signature: signedSafeTxHash,
-        },
-      });
-    });
-  });
-
-  describe('deleteDeviceRegistration', () => {
-    it('should delete device registration', async () => {
-      const uuid = faker.string.uuid();
-      const deleteDeviceRegistrationUrl = `${baseUrl}/api/v1/notifications/devices/${uuid}`;
-      networkService.delete.mockResolvedValueOnce({
-        status: 200,
-        data: {},
-      });
-
-      await service.deleteDeviceRegistration(uuid);
-
-      expect(networkService.delete).toHaveBeenCalledTimes(1);
-      expect(networkService.delete).toHaveBeenCalledWith({
-        url: deleteDeviceRegistrationUrl,
-      });
-    });
-
-    const errorMessage = faker.word.words();
-    it.each([
-      ['Transaction Service', { nonFieldErrors: [errorMessage] }],
-      ['standard', new Error(errorMessage)],
-    ])(`should forward a %s error`, async (_, error) => {
-      const uuid = faker.string.uuid();
-      const deleteDeviceRegistrationUrl = `${baseUrl}/api/v1/notifications/devices/${uuid}`;
-      const statusCode = faker.internet.httpStatusCode({
-        types: ['clientError', 'serverError'],
-      });
-      const expected = new DataSourceError(errorMessage, statusCode);
-      networkService.delete.mockRejectedValueOnce(
-        new NetworkResponseError(
-          new URL(deleteDeviceRegistrationUrl),
-          {
-            status: statusCode,
-          } as Response,
-          error,
-        ),
-      );
-
-      await expect(service.deleteDeviceRegistration(uuid)).rejects.toThrow(
-        expected,
-      );
-
-      expect(networkService.delete).toHaveBeenCalledTimes(1);
-      expect(networkService.delete).toHaveBeenCalledWith({
-        url: deleteDeviceRegistrationUrl,
-      });
-    });
-  });
-
-  describe('deleteSafeRegistration', () => {
-    it('should delete Safe registration', async () => {
-      const uuid = faker.string.uuid();
-      const safeAddress = faker.finance.ethereumAddress();
-      const deleteSafeRegistrationUrl = `${baseUrl}/api/v1/notifications/devices/${uuid}/safes/${safeAddress}`;
-      networkService.delete.mockResolvedValueOnce({
-        status: 200,
-        data: {},
-      });
-
-      await service.deleteSafeRegistration({ uuid, safeAddress });
-
-      expect(networkService.delete).toHaveBeenCalledTimes(1);
-      expect(networkService.delete).toHaveBeenCalledWith({
-        url: deleteSafeRegistrationUrl,
-      });
-    });
-
-    const errorMessage = faker.word.words();
-    it.each([
-      ['Transaction Service', { nonFieldErrors: [errorMessage] }],
-      ['standard', new Error(errorMessage)],
-    ])(`should forward a %s error`, async (_, error) => {
-      const uuid = faker.string.uuid();
-      const safeAddress = faker.finance.ethereumAddress();
-      const deleteSafeRegistrationUrl = `${baseUrl}/api/v1/notifications/devices/${uuid}/safes/${safeAddress}`;
-      const statusCode = faker.internet.httpStatusCode({
-        types: ['clientError', 'serverError'],
-      });
-      const expected = new DataSourceError(errorMessage, statusCode);
-      networkService.delete.mockRejectedValueOnce(
-        new NetworkResponseError(
-          new URL(deleteSafeRegistrationUrl),
-          {
-            status: statusCode,
-          } as Response,
-          error,
-        ),
-      );
-
-      await expect(
-        service.deleteSafeRegistration({ uuid, safeAddress }),
-      ).rejects.toThrow(expected);
-
-      expect(networkService.delete).toHaveBeenCalledTimes(1);
-      expect(networkService.delete).toHaveBeenCalledWith({
-        url: deleteSafeRegistrationUrl,
-      });
-    });
-  });
-
   describe('getEstimation', () => {
     it('should return the estimation received', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const to = getAddress(faker.finance.ethereumAddress());
       const value = faker.string.numeric();
       const data = faker.string.hexadecimal() as `0x${string}`;
@@ -2126,7 +2266,7 @@ describe('TransactionApi', () => {
       };
       const getEstimationUrl = `${baseUrl}/api/v1/safes/${safeAddress}/multisig-transactions/estimations/`;
       networkService.post.mockResolvedValueOnce({
-        data: estimation,
+        data: rawify(estimation),
         status: 200,
       });
 
@@ -2153,7 +2293,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const to = getAddress(faker.finance.ethereumAddress());
       const value = faker.string.numeric();
       const data = faker.string.hexadecimal() as `0x${string}`;
@@ -2199,7 +2339,7 @@ describe('TransactionApi', () => {
       const getMessageByHashUrl = `${baseUrl}/api/v1/messages/${messageHash}`;
       const message = messageBuilder().build();
       const cacheDir = new CacheDir(`${chainId}_message_${messageHash}`, '');
-      mockDataSource.get.mockResolvedValueOnce(message);
+      mockDataSource.get.mockResolvedValueOnce(rawify(message));
 
       const actual = await service.getMessageByHash(messageHash);
 
@@ -2251,7 +2391,7 @@ describe('TransactionApi', () => {
 
   describe('getMessagesBySafe', () => {
     it('should return the message hash received', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const limit = faker.number.int();
       const offset = faker.number.int();
       const getMessageBySafeUrl = `${baseUrl}/api/v1/safes/${safeAddress}/messages/`;
@@ -2260,7 +2400,7 @@ describe('TransactionApi', () => {
         `${chainId}_messages_${safeAddress}`,
         `${limit}_${offset}`,
       );
-      mockDataSource.get.mockResolvedValueOnce(message);
+      mockDataSource.get.mockResolvedValueOnce(rawify(message));
 
       const actual = await service.getMessagesBySafe({
         safeAddress,
@@ -2289,7 +2429,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const limit = faker.number.int();
       const offset = faker.number.int();
       const getMessageBySafeUrl = `${baseUrl}/api/v1/safes/${safeAddress}/messages/`;
@@ -2337,12 +2477,12 @@ describe('TransactionApi', () => {
 
   describe('postMultisigTransaction', () => {
     it('should post multisig transaction', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const proposeTransactionDto = proposeTransactionDtoBuilder().build();
       const postMultisigTransactionUrl = `${baseUrl}/api/v1/safes/${safeAddress}/multisig-transactions/`;
       networkService.post.mockResolvedValueOnce({
         status: 200,
-        data: {},
+        data: rawify({}),
       });
 
       await service.postMultisigTransaction({
@@ -2366,7 +2506,7 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const proposeTransactionDto = proposeTransactionDtoBuilder().build();
       const postMultisigTransactionUrl = `${baseUrl}/api/v1/safes/${safeAddress}/multisig-transactions/`;
       const statusCode = faker.internet.httpStatusCode({
@@ -2404,14 +2544,15 @@ describe('TransactionApi', () => {
 
   describe('postMessage', () => {
     it('should post message', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const message = faker.word.words();
       const safeAppId = faker.number.int();
       const signature = faker.string.hexadecimal();
+      const origin = fakeJson();
       const postMessageUrl = `${baseUrl}/api/v1/safes/${safeAddress}/messages/`;
       networkService.post.mockResolvedValueOnce({
         status: 200,
-        data: {},
+        data: rawify({}),
       });
 
       await service.postMessage({
@@ -2419,6 +2560,7 @@ describe('TransactionApi', () => {
         message,
         safeAppId,
         signature,
+        origin,
       });
 
       expect(networkService.post).toHaveBeenCalledTimes(1);
@@ -2428,6 +2570,7 @@ describe('TransactionApi', () => {
           message,
           safeAppId,
           signature,
+          origin,
         },
       });
     });
@@ -2437,10 +2580,11 @@ describe('TransactionApi', () => {
       ['Transaction Service', { nonFieldErrors: [errorMessage] }],
       ['standard', new Error(errorMessage)],
     ])(`should forward a %s error`, async (_, error) => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
       const message = faker.word.words();
       const safeAppId = faker.number.int();
       const signature = faker.string.hexadecimal();
+      const origin = fakeJson();
       const postMessageUrl = `${baseUrl}/api/v1/safes/${safeAddress}/messages/`;
       const statusCode = faker.internet.httpStatusCode({
         types: ['clientError', 'serverError'],
@@ -2462,6 +2606,7 @@ describe('TransactionApi', () => {
           message,
           safeAppId,
           signature,
+          origin,
         }),
       ).rejects.toThrow(expected);
 
@@ -2472,6 +2617,7 @@ describe('TransactionApi', () => {
           message,
           safeAppId,
           signature,
+          origin,
         },
       });
     });
@@ -2484,7 +2630,7 @@ describe('TransactionApi', () => {
       const postMessageSignatureUrl = `${baseUrl}/api/v1/messages/${messageHash}/signatures/`;
       networkService.post.mockResolvedValueOnce({
         status: 200,
-        data: {},
+        data: rawify({}),
       });
 
       await service.postMessageSignature({
@@ -2542,7 +2688,7 @@ describe('TransactionApi', () => {
 
   describe('clearMessagesBySafe', () => {
     it('should clear the messages cache by Safe address', async () => {
-      const safeAddress = faker.finance.ethereumAddress();
+      const safeAddress = getAddress(faker.finance.ethereumAddress());
 
       await service.clearMessagesBySafe({ safeAddress });
 
@@ -2563,6 +2709,84 @@ describe('TransactionApi', () => {
       expect(mockCacheService.deleteByKey).toHaveBeenCalledWith(
         `${chainId}_message_${messageHash}`,
       );
+    });
+  });
+
+  // TODO: Remove temporary cache times test for Hoodi chain.
+  describe('temp - Hoodi expiration times', () => {
+    it('should use the Hoodi expiration time for the datasource', async () => {
+      const hoodiExpirationTime = faker.number.int();
+      const hoodiChainId = '560048';
+      mockConfigurationService.getOrThrow.mockImplementation((key) => {
+        if (key === 'expirationTimeInSeconds.hoodi') {
+          return hoodiExpirationTime;
+        }
+        if (key === 'expirationTimeInSeconds.indexing') {
+          return indexingExpirationTimeInSeconds;
+        }
+        if (key === 'expirationTimeInSeconds.default') {
+          return defaultExpirationTimeInSeconds;
+        }
+        if (key === 'expirationTimeInSeconds.notFound.default') {
+          return notFoundExpireTimeSeconds;
+        }
+        if (key === 'expirationTimeInSeconds.notFound.contract') {
+          return notFoundExpireTimeSeconds;
+        }
+        if (key === 'expirationTimeInSeconds.notFound.token') {
+          return notFoundExpireTimeSeconds;
+        }
+        if (key === 'owners.ownersTtlSeconds') {
+          return ownersTtlSeconds;
+        }
+        // TODO: Remove after Vault decoding has been released
+        if (key === 'application.isProduction') {
+          return true;
+        }
+        throw Error(`Unexpected key: ${key}`);
+      });
+
+      service = new TransactionApi(
+        hoodiChainId, // Hoodi chainId
+        baseUrl,
+        mockDataSource,
+        mockCacheService,
+        mockConfigurationService,
+        httpErrorFactory,
+        mockNetworkService,
+        mockLoggingService,
+      );
+
+      const token = tokenBuilder().build();
+      const tokensPage = pageBuilder().with('results', [token]).build();
+      const limit = faker.number.int();
+      const offset = faker.number.int();
+      const getTokensUrl = `${baseUrl}/api/v1/tokens/`;
+      const cacheDir = new CacheDir(
+        `${hoodiChainId}_tokens`,
+        `${limit}_${offset}`,
+      );
+      mockDataSource.get.mockResolvedValueOnce(rawify(tokensPage));
+
+      const actual = await service.getTokens({
+        limit,
+        offset,
+      });
+
+      expect(actual).toBe(tokensPage);
+      expect(mockDataSource.get).toHaveBeenCalledTimes(1);
+      expect(mockDataSource.get).toHaveBeenCalledWith({
+        cacheDir,
+        expireTimeSeconds: hoodiExpirationTime,
+        notFoundExpireTimeSeconds: hoodiExpirationTime,
+        url: getTokensUrl,
+        networkRequest: {
+          params: {
+            limit,
+            offset,
+          },
+        },
+      });
     });
   });
 });

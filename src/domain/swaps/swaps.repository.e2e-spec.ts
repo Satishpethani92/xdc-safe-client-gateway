@@ -1,15 +1,15 @@
-import { INestApplication } from '@nestjs/common';
+import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import '@/__tests__/matchers/to-be-string-or-null';
 import { CacheKeyPrefix } from '@/datasources/cache/constants';
-import { SwapsModule } from '@/domain/swaps/swaps.module';
-import { ValidationModule } from '@/validation/validation.module';
+import { SwapsRepositoryModule } from '@/domain/swaps/swaps-repository.module';
 import { TestLoggingModule } from '@/logging/__tests__/test.logging.module';
 import { ConfigurationModule } from '@/config/configuration.module';
 import { NetworkModule } from '@/datasources/network/network.module';
-import { SwapsRepository } from '@/domain/swaps/swaps.repository';
-import { Order } from '@/domain/swaps/entities/order.entity';
+import { ISwapsRepository } from '@/domain/swaps/swaps.repository';
+import type { Order } from '@/domain/swaps/entities/order.entity';
 import configuration from '@/config/entities/configuration';
+import type { Server } from 'net';
 
 const orderIds = {
   '1': {
@@ -28,12 +28,12 @@ const orderIds = {
         executedFeeAmount: BigInt('0'),
         executedSellAmount: BigInt('20000000000000000000000'),
         executedSellAmountBeforeFees: BigInt('20000000000000000000000'),
-        executedSurplusFee: BigInt('344394908543621220441'),
+        executedFee: BigInt('344394908543621220441'),
+        executedFeeToken: '0x710287D1D39DCf62094A83EBB3e736e79400068a',
         feeAmount: BigInt('0'),
         from: null,
         fullAppData:
           '{"version":"0.4.0","appCode":"DefiLlama","environment":"production","metadata":{"referrer":{"version":"0.1.0","address":"0x08a3c2A819E3de7ACa384c798269B3Ce1CD0e437"}}}',
-        fullFeeAmount: BigInt('0'),
         invalidated: false,
         isLiquidityOrder: false,
         kind: 'sell',
@@ -73,12 +73,12 @@ const orderIds = {
         executedFeeAmount: BigInt('0'),
         executedSellAmount: BigInt('60000000000000000000'),
         executedSellAmountBeforeFees: BigInt('60000000000000000000'),
-        executedSurplusFee: BigInt('746134584595989'),
+        executedFee: BigInt('746134584595989'),
+        executedFeeToken: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d',
         feeAmount: BigInt('0'),
         from: null,
         fullAppData:
           '{"appCode":"CoW Swap","environment":"production","metadata":{"orderClass":{"orderClass":"market"},"quote":{"slippageBips":"200"}},"version":"0.11.0"}',
-        fullFeeAmount: BigInt('0'),
         invalidated: false,
         isLiquidityOrder: false,
         kind: 'sell',
@@ -103,20 +103,19 @@ const orderIds = {
   },
 };
 describe('CowSwap E2E tests', () => {
-  let app: INestApplication;
-  let repository: SwapsRepository;
+  let app: INestApplication<Server>;
+  let repository: ISwapsRepository;
 
   beforeAll(async () => {
     const cacheKeyPrefix = crypto.randomUUID();
     const moduleRef = await Test.createTestingModule({
       imports: [
         // Feature
-        SwapsModule,
+        SwapsRepositoryModule,
         // Common
         ConfigurationModule.register(configuration),
         NetworkModule,
         TestLoggingModule,
-        ValidationModule,
       ],
     })
       .overrideProvider(CacheKeyPrefix)
@@ -124,7 +123,7 @@ describe('CowSwap E2E tests', () => {
       .compile();
 
     app = moduleRef.createNestApplication();
-    repository = app.get(SwapsRepository);
+    repository = app.get(ISwapsRepository);
     await app.init();
   });
 
@@ -141,7 +140,10 @@ describe('CowSwap E2E tests', () => {
             orderId as `0x${string}`,
           );
 
-          expect(actual).toEqual(expectedObject);
+          expect(actual).toEqual({
+            ...expectedObject,
+            fullAppData: JSON.parse(expectedObject.fullAppData as string),
+          });
         });
       });
     });

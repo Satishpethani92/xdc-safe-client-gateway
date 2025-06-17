@@ -1,5 +1,5 @@
-import * as path from 'path';
-import * as fs from 'fs';
+import path from 'path';
+import fs from 'fs';
 
 /**
  * This generates a map of contract names to chain IDs to a versions array
@@ -41,6 +41,15 @@ const deploymentAliases = {
     'GnosisSafeL2', // 1.3.0
     'SafeL2', // 1.4.1
   ],
+  SafeMigration: [
+    'SafeMigration', // 1.4.1
+  ],
+  SafeToL2Migration: [
+    'SafeToL2Migration', // 1.4.1
+  ],
+  SafeToL2Setup: [
+    'SafeToL2Setup', // 1.4.1
+  ],
   SignMessageLib: [
     'SignMessageLib', // 1.3.0, 1.4.1
   ],
@@ -60,7 +69,7 @@ const assetsDir = path.join(
 );
 
 type VersionsByChainIdByDeploymentMap = {
-  [contractAlias: string]: { [chainId: string]: string[] | undefined };
+  [contractAlias: string]: { [chainId: string]: Array<string> | undefined };
 };
 
 export function getVersionsByChainIdByDeploymentMap(): VersionsByChainIdByDeploymentMap {
@@ -85,9 +94,9 @@ export function getVersionsByChainIdByDeploymentMap(): VersionsByChainIdByDeploy
       const deployment = JSON.parse(assetJson);
 
       // Get the alias name
-      const name = Object.entries(deploymentAliases).find(([, aliases]) => {
-        return aliases.includes(deployment.contractName);
-      })?.[0];
+      const name = Object.entries(deploymentAliases).find(([, aliases]) =>
+        aliases.includes(deployment.contractName as string),
+      )?.[0];
 
       if (!name) {
         throw new Error(
@@ -96,9 +105,13 @@ export function getVersionsByChainIdByDeploymentMap(): VersionsByChainIdByDeploy
       }
 
       // Add the version to the map
-      for (const chainId of Object.keys(deployment.networkAddresses)) {
+      for (const chainId of Object.keys(
+        deployment.networkAddresses as Record<string, string>,
+      )) {
         versionsByDeploymentByChainId[name][chainId] ??= [];
-        versionsByDeploymentByChainId[name][chainId]?.push(deployment.version);
+        versionsByDeploymentByChainId[name][chainId]?.push(
+          deployment.version as string,
+        );
       }
     }
   }

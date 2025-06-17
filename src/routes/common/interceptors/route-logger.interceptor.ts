@@ -10,8 +10,9 @@ import { ILoggingService, LoggingService } from '@/logging/logging.interface';
 import { Inject } from '@nestjs/common/decorators';
 import { Observable, tap } from 'rxjs';
 import { formatRouteLogMessage } from '@/logging/utils';
-import { DataSourceError } from '@/domain/errors/data-source.error';
 import { Request, Response } from 'express';
+import isNumber from 'lodash/isNumber';
+import { ZodError } from 'zod';
 
 /**
  * The {@link RouteLoggerInterceptor} is an interceptor that logs the requests
@@ -35,12 +36,12 @@ export class RouteLoggerInterceptor implements NestInterceptor {
     const startTimeMs: number = performance.now();
 
     const httpContext = context.switchToHttp();
-    const request = httpContext.getRequest();
-    const response = httpContext.getResponse();
+    const request: Request = httpContext.getRequest();
+    const response: Response = httpContext.getResponse();
 
     return next.handle().pipe(
       tap({
-        error: (e) => this.onError(request, e, startTimeMs),
+        error: (e: Error) => this.onError(request, e, startTimeMs),
         complete: () => this.onComplete(request, response, startTimeMs),
       }),
     );
@@ -62,13 +63,14 @@ export class RouteLoggerInterceptor implements NestInterceptor {
    * @private
    */
   private onError(request: Request, error: Error, startTimeMs: number): void {
-    let statusCode;
-    if (error instanceof HttpException) {
+    let statusCode: number = HttpStatus.INTERNAL_SERVER_ERROR;
+    if ('code' in error && isNumber(error.code)) {
+      statusCode = error.code;
+    } else if (error instanceof HttpException) {
       statusCode = error.getStatus();
-    } else if (error instanceof DataSourceError) {
-      statusCode = error.code ?? HttpStatus.INTERNAL_SERVER_ERROR;
-    } else {
-      statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
+    } else if (error instanceof ZodError) {
+      // Since we mainly use Zod for Datasource validation, we should throw a 502 Bad Gateway instead of a 422 Unprocessable Entity
+      statusCode = HttpStatus.BAD_GATEWAY;
     }
 
     const message = formatRouteLogMessage(

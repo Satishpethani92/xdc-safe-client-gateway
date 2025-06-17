@@ -1,4 +1,5 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import type { TestingModule } from '@nestjs/testing';
+import { Test } from '@nestjs/testing';
 import { AppModule } from '@/app.module';
 import { CacheModule } from '@/datasources/cache/cache.module';
 import { TestCacheModule } from '@/datasources/cache/__tests__/test.cache.module';
@@ -8,12 +9,10 @@ import { TestLoggingModule } from '@/logging/__tests__/test.logging.module';
 import { NetworkModule } from '@/datasources/network/network.module';
 import { TestNetworkModule } from '@/datasources/network/__tests__/test.network.module';
 import { IConfigurationService } from '@/config/configuration.service.interface';
-import {
-  INetworkService,
-  NetworkService,
-} from '@/datasources/network/network.service.interface';
+import type { INetworkService } from '@/datasources/network/network.service.interface';
+import { NetworkService } from '@/datasources/network/network.service.interface';
 import { TestAppProvider } from '@/__tests__/test-app.provider';
-import * as request from 'supertest';
+import request from 'supertest';
 import { chainBuilder } from '@/domain/chains/entities/__tests__/chain.builder';
 import { safeBuilder } from '@/domain/safe/entities/__tests__/safe.builder';
 import {
@@ -21,12 +20,20 @@ import {
   toJson as multisigTransactionToJson,
 } from '@/domain/safe/entities/__tests__/multisig-transaction.builder';
 import { pageBuilder } from '@/domain/entities/__tests__/page.builder';
-import { INestApplication } from '@nestjs/common';
-import { AccountDataSourceModule } from '@/datasources/account/account.datasource.module';
-import { TestAccountDataSourceModule } from '@/datasources/account/__tests__/test.account.datasource.module';
+import type { INestApplication } from '@nestjs/common';
+import { TestQueuesApiModule } from '@/datasources/queues/__tests__/test.queues-api.module';
+import { QueuesApiModule } from '@/datasources/queues/queues-api.module';
+import type { Server } from 'net';
+import { PostgresDatabaseModuleV2 } from '@/datasources/db/v2/postgres-database.module';
+import { TestPostgresDatabaseModuleV2 } from '@/datasources/db/v2/test.postgres-database.module';
+import { PostgresDatabaseModule } from '@/datasources/db/v1/postgres-database.module';
+import { TestPostgresDatabaseModule } from '@/datasources/db/__tests__/test.postgres-database.module';
+import { TestTargetedMessagingDatasourceModule } from '@/datasources/targeted-messaging/__tests__/test.targeted-messaging.datasource.module';
+import { TargetedMessagingDatasourceModule } from '@/datasources/targeted-messaging/targeted-messaging.datasource.module';
+import { rawify } from '@/validation/entities/raw.entity';
 
 describe('Safes Controller Nonces (Unit)', () => {
-  let app: INestApplication;
+  let app: INestApplication<Server>;
   let safeConfigUrl: string | undefined;
   let networkService: jest.MockedObjectDeep<INetworkService>;
   let configurationService: jest.MockedObjectDeep<IConfigurationService>;
@@ -37,14 +44,20 @@ describe('Safes Controller Nonces (Unit)', () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule.register(configuration)],
     })
-      .overrideModule(AccountDataSourceModule)
-      .useModule(TestAccountDataSourceModule)
+      .overrideModule(PostgresDatabaseModule)
+      .useModule(TestPostgresDatabaseModule)
+      .overrideModule(TargetedMessagingDatasourceModule)
+      .useModule(TestTargetedMessagingDatasourceModule)
       .overrideModule(CacheModule)
       .useModule(TestCacheModule)
       .overrideModule(RequestScopedLoggingModule)
       .useModule(TestLoggingModule)
       .overrideModule(NetworkModule)
       .useModule(TestNetworkModule)
+      .overrideModule(QueuesApiModule)
+      .useModule(TestQueuesApiModule)
+      .overrideModule(PostgresDatabaseModuleV2)
+      .useModule(TestPostgresDatabaseModuleV2)
       .compile();
 
     configurationService = moduleFixture.get(IConfigurationService);
@@ -71,12 +84,12 @@ describe('Safes Controller Nonces (Unit)', () => {
     networkService.get.mockImplementation(({ url }) => {
       switch (url) {
         case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
-          return Promise.resolve({ data: chain, status: 200 });
+          return Promise.resolve({ data: rawify(chain), status: 200 });
         case `${chain.transactionService}/api/v1/safes/${safeInfo.address}`:
-          return Promise.resolve({ data: safeInfo, status: 200 });
+          return Promise.resolve({ data: rawify(safeInfo), status: 200 });
         case `${chain.transactionService}/api/v1/safes/${safeInfo.address}/multisig-transactions/`:
           return Promise.resolve({
-            data: multisigTransactionsPage,
+            data: rawify(multisigTransactionsPage),
             status: 200,
           });
       }
@@ -108,12 +121,12 @@ describe('Safes Controller Nonces (Unit)', () => {
     networkService.get.mockImplementation(({ url }) => {
       switch (url) {
         case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
-          return Promise.resolve({ data: chain, status: 200 });
+          return Promise.resolve({ data: rawify(chain), status: 200 });
         case `${chain.transactionService}/api/v1/safes/${safeInfo.address}`:
-          return Promise.resolve({ data: safeInfo, status: 200 });
+          return Promise.resolve({ data: rawify(safeInfo), status: 200 });
         case `${chain.transactionService}/api/v1/safes/${safeInfo.address}/multisig-transactions/`:
           return Promise.resolve({
-            data: multisigTransactionsPage,
+            data: rawify(multisigTransactionsPage),
             status: 200,
           });
       }
@@ -137,12 +150,12 @@ describe('Safes Controller Nonces (Unit)', () => {
     networkService.get.mockImplementation(({ url }) => {
       switch (url) {
         case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
-          return Promise.resolve({ data: chain, status: 200 });
+          return Promise.resolve({ data: rawify(chain), status: 200 });
         case `${chain.transactionService}/api/v1/safes/${safeInfo.address}`:
-          return Promise.resolve({ data: safeInfo, status: 200 });
+          return Promise.resolve({ data: rawify(safeInfo), status: 200 });
         case `${chain.transactionService}/api/v1/safes/${safeInfo.address}/multisig-transactions/`:
           return Promise.resolve({
-            data: multisigTransactionsPage,
+            data: rawify(multisigTransactionsPage),
             status: 200,
           });
       }

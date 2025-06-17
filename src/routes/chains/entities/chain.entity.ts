@@ -13,6 +13,10 @@ import {
   BlockExplorerUriTemplate as ApiBlockExplorerUriTemplate,
 } from '@/routes/chains/entities/block-explorer-uri-template.entity';
 import {
+  BeaconChainExplorerUriTemplate,
+  BeaconChainExplorerUriTemplate as ApiBeaconChainExplorerUriTemplate,
+} from '@/domain/chains/entities/beacon-chain-explorer-uri-template.entity';
+import {
   GasPriceOracle,
   GasPriceOracle as ApiGasPriceOracle,
 } from '@/routes/chains/entities/gas-price-oracle.entity';
@@ -32,6 +36,8 @@ import {
   Theme,
   Theme as ApiTheme,
 } from '@/routes/chains/entities/theme.entity';
+import { BalancesProvider } from '@/routes/chains/entities/balances-provider.entity';
+import { ContractAddresses } from '@/routes/chains/entities/contract-addresses.entity';
 
 @ApiExtraModels(ApiGasPriceOracle, ApiGasPriceFixed, ApiGasPriceFixedEIP1559)
 export class Chain {
@@ -48,17 +54,25 @@ export class Chain {
   @ApiProperty()
   isTestnet: boolean;
   @ApiProperty()
+  zk: boolean;
+  @ApiProperty()
   nativeCurrency: ApiNativeCurrency;
   @ApiProperty()
   transactionService: string;
   @ApiProperty()
   blockExplorerUriTemplate: ApiBlockExplorerUriTemplate;
   @ApiProperty()
-  disabledWallets: string[];
-  @ApiPropertyOptional({ type: String, nullable: true })
-  ensRegistryAddress: string | null;
+  beaconChainExplorerUriTemplate: ApiBeaconChainExplorerUriTemplate;
   @ApiProperty()
-  features: string[];
+  disabledWallets: Array<string>;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  ensRegistryAddress: `0x${string}` | null;
+  @ApiProperty()
+  balancesProvider: BalancesProvider;
+  @ApiProperty()
+  contractAddresses: ContractAddresses;
+  @ApiProperty()
+  features: Array<string>;
   @ApiProperty({
     type: 'array',
     items: {
@@ -82,44 +96,56 @@ export class Chain {
   shortName: string;
   @ApiProperty()
   theme: ApiTheme;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  recommendedMasterCopyVersion: string | null;
 
-  constructor(
-    chainId: string,
-    chainName: string,
-    description: string,
-    l2: boolean,
-    nativeCurrency: NativeCurrency,
-    transactionService: string,
-    blockExplorerUriTemplate: BlockExplorerUriTemplate,
-    disabledWallets: string[],
-    features: string[],
-    gasPrice: Array<GasPriceOracle | GasPriceFixed | GasPriceFixedEIP1559>,
-    publicRpcUri: RpcUri,
-    rpcUri: RpcUri,
-    safeAppsRpcUri: RpcUri,
-    shortName: string,
-    theme: Theme,
-    ensRegistryAddress: string | null,
-    isTestnet: boolean,
-    chainLogoUri: string | null,
-  ) {
-    this.chainId = chainId;
-    this.chainName = chainName;
-    this.description = description;
-    this.chainLogoUri = chainLogoUri;
-    this.l2 = l2;
-    this.isTestnet = isTestnet;
-    this.nativeCurrency = nativeCurrency;
-    this.transactionService = transactionService;
-    this.blockExplorerUriTemplate = blockExplorerUriTemplate;
-    this.disabledWallets = disabledWallets;
-    this.ensRegistryAddress = ensRegistryAddress;
-    this.features = features;
-    this.gasPrice = gasPrice;
-    this.publicRpcUri = publicRpcUri;
-    this.rpcUri = rpcUri;
-    this.safeAppsRpcUri = safeAppsRpcUri;
-    this.shortName = shortName;
-    this.theme = theme;
+  constructor(args: {
+    chainId: string;
+    chainName: string;
+    description: string;
+    l2: boolean;
+    zk: boolean;
+    nativeCurrency: NativeCurrency;
+    transactionService: string;
+    blockExplorerUriTemplate: BlockExplorerUriTemplate;
+    beaconChainExplorerUriTemplate: BeaconChainExplorerUriTemplate;
+    disabledWallets: Array<string>;
+    features: Array<string>;
+    gasPrice: Array<GasPriceOracle | GasPriceFixed | GasPriceFixedEIP1559>;
+    publicRpcUri: RpcUri;
+    rpcUri: RpcUri;
+    safeAppsRpcUri: RpcUri;
+    shortName: string;
+    theme: Theme;
+    ensRegistryAddress: `0x${string}` | null;
+    isTestnet: boolean;
+    chainLogoUri: string | null;
+    balancesProvider: BalancesProvider;
+    contractAddresses: ContractAddresses;
+    recommendedMasterCopyVersion: string | null;
+  }) {
+    this.chainId = args.chainId;
+    this.chainName = args.chainName;
+    this.description = args.description;
+    this.chainLogoUri = args.chainLogoUri;
+    this.l2 = args.l2;
+    this.isTestnet = args.isTestnet;
+    this.zk = args.zk;
+    this.nativeCurrency = args.nativeCurrency;
+    this.transactionService = args.transactionService;
+    this.blockExplorerUriTemplate = args.blockExplorerUriTemplate;
+    this.beaconChainExplorerUriTemplate = args.beaconChainExplorerUriTemplate;
+    this.disabledWallets = args.disabledWallets;
+    this.ensRegistryAddress = args.ensRegistryAddress;
+    this.features = args.features;
+    this.gasPrice = args.gasPrice;
+    this.publicRpcUri = args.publicRpcUri;
+    this.rpcUri = args.rpcUri;
+    this.safeAppsRpcUri = args.safeAppsRpcUri;
+    this.shortName = args.shortName;
+    this.theme = args.theme;
+    this.balancesProvider = args.balancesProvider;
+    this.contractAddresses = args.contractAddresses;
+    this.recommendedMasterCopyVersion = args.recommendedMasterCopyVersion;
   }
 }

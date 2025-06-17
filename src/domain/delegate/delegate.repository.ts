@@ -3,7 +3,7 @@ import { IDelegateRepository } from '@/domain/delegate/delegate.repository.inter
 import { Delegate } from '@/domain/delegate/entities/delegate.entity';
 import { Page } from '@/domain/entities/page.entity';
 import { ITransactionApiManager } from '@/domain/interfaces/transaction-api.manager.interface';
-import { DelegateSchema } from '@/domain/delegate/entities/schemas/delegate.schema';
+import { DelegatePageSchema } from '@/domain/delegate/entities/schemas/delegate.schema';
 
 @Injectable()
 export class DelegateRepository implements IDelegateRepository {
@@ -14,15 +14,16 @@ export class DelegateRepository implements IDelegateRepository {
 
   async getDelegates(args: {
     chainId: string;
-    safeAddress?: string;
-    delegate?: string;
-    delegator?: string;
+    safeAddress?: `0x${string}`;
+    delegate?: `0x${string}`;
+    delegator?: `0x${string}`;
     label?: string;
     limit?: number;
     offset?: number;
   }): Promise<Page<Delegate>> {
-    const transactionService =
-      await this.transactionApiManager.getTransactionApi(args.chainId);
+    const transactionService = await this.transactionApiManager.getApi(
+      args.chainId,
+    );
     const page = await transactionService.getDelegates({
       safeAddress: args.safeAddress,
       delegate: args.delegate,
@@ -32,8 +33,7 @@ export class DelegateRepository implements IDelegateRepository {
       offset: args.offset,
     });
 
-    page?.results.map((result) => DelegateSchema.parse(result));
-    return page;
+    return DelegatePageSchema.parse(page);
   }
 
   async postDelegate(args: {
@@ -44,8 +44,9 @@ export class DelegateRepository implements IDelegateRepository {
     signature: string;
     label: string;
   }): Promise<void> {
-    const transactionService =
-      await this.transactionApiManager.getTransactionApi(args.chainId);
+    const transactionService = await this.transactionApiManager.getApi(
+      args.chainId,
+    );
     await transactionService.postDelegate({
       safeAddress: args.safeAddress,
       delegate: args.delegate,
@@ -57,12 +58,13 @@ export class DelegateRepository implements IDelegateRepository {
 
   async deleteDelegate(args: {
     chainId: string;
-    delegate: string;
-    delegator: string;
+    delegate: `0x${string}`;
+    delegator: `0x${string}`;
     signature: string;
   }): Promise<unknown> {
-    const transactionService =
-      await this.transactionApiManager.getTransactionApi(args.chainId);
+    const transactionService = await this.transactionApiManager.getApi(
+      args.chainId,
+    );
     return transactionService.deleteDelegate({
       delegate: args.delegate,
       delegator: args.delegator,
@@ -72,12 +74,13 @@ export class DelegateRepository implements IDelegateRepository {
 
   async deleteSafeDelegate(args: {
     chainId: string;
-    delegate: string;
-    safeAddress: string;
+    delegate: `0x${string}`;
+    safeAddress: `0x${string}`;
     signature: string;
   }): Promise<unknown> {
-    const transactionService =
-      await this.transactionApiManager.getTransactionApi(args.chainId);
+    const transactionService = await this.transactionApiManager.getApi(
+      args.chainId,
+    );
     return transactionService.deleteSafeDelegate({
       delegate: args.delegate,
       safeAddress: args.safeAddress,

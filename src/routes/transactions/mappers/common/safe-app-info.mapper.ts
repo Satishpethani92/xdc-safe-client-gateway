@@ -26,6 +26,7 @@ export class SafeAppInfoMapper {
 
     const [safeApp] = await this.safeAppsRepository.getSafeApps({
       chainId,
+      onlyListed: false,
       url: originUrl,
     });
     if (!safeApp) {
@@ -48,7 +49,7 @@ export class SafeAppInfoMapper {
   private getOriginUrl(transaction: MultisigTransaction): string | null {
     try {
       return transaction.origin ? JSON.parse(transaction.origin).url : null;
-    } catch (e) {
+    } catch {
       this.loggingService.debug(
         `Safe TX Hash ${transaction.safeTxHash} origin is not valid JSON. origin=${transaction.origin}`,
       );

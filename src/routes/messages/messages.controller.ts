@@ -14,6 +14,7 @@ import { MessagesService } from '@/routes/messages/messages.service';
 import { ValidationPipe } from '@/validation/pipes/validation.pipe';
 import { UpdateMessageSignatureDtoSchema } from '@/routes/messages/entities/schemas/update-message-signature.dto.schema';
 import { CreateMessageDtoSchema } from '@/routes/messages/entities/schemas/create-message.dto.schema';
+import { AddressSchema } from '@/validation/entities/schemas/address.schema';
 
 @ApiTags('messages')
 @Controller({
@@ -27,7 +28,7 @@ export class MessagesController {
   @Get('chains/:chainId/messages/:messageHash')
   async getMessageByHash(
     @Param('chainId') chainId: string,
-    @Param('messageHash') messageHash: string,
+    @Param('messageHash') messageHash: `0x${string}`,
   ): Promise<Message> {
     return this.messagesService.getMessageByHash({ chainId, messageHash });
   }
@@ -37,7 +38,8 @@ export class MessagesController {
   @ApiQuery({ name: 'cursor', required: false, type: String })
   async getMessagesBySafe(
     @Param('chainId') chainId: string,
-    @Param('safeAddress') safeAddress: string,
+    @Param('safeAddress', new ValidationPipe(AddressSchema))
+    safeAddress: `0x${string}`,
     @RouteUrlDecorator() routeUrl: URL,
     @PaginationDataDecorator() paginationData: PaginationData,
   ): Promise<Page<DateLabel | MessageItem>> {
@@ -53,7 +55,8 @@ export class MessagesController {
   @Post('chains/:chainId/safes/:safeAddress/messages')
   async createMessage(
     @Param('chainId') chainId: string,
-    @Param('safeAddress') safeAddress: string,
+    @Param('safeAddress', new ValidationPipe(AddressSchema))
+    safeAddress: `0x${string}`,
     @Body(new ValidationPipe(CreateMessageDtoSchema))
     createMessageDto: CreateMessageDto,
   ): Promise<unknown> {
@@ -68,7 +71,7 @@ export class MessagesController {
   @Post('chains/:chainId/messages/:messageHash/signatures')
   async updateMessageSignature(
     @Param('chainId') chainId: string,
-    @Param('messageHash') messageHash: string,
+    @Param('messageHash') messageHash: `0x${string}`,
     @Body(new ValidationPipe(UpdateMessageSignatureDtoSchema))
     updateMessageSignatureDto: UpdateMessageSignatureDto,
   ): Promise<unknown> {

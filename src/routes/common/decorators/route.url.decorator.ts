@@ -1,5 +1,7 @@
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import type { ExecutionContext } from '@nestjs/common';
+import { createParamDecorator } from '@nestjs/common';
 import { getRouteUrl } from '@/routes/common/decorators/utils';
+import type { Request } from 'express';
 
 /**
  * Route decorator which extracts the resulting
@@ -7,7 +9,7 @@ import { getRouteUrl } from '@/routes/common/decorators/utils';
  */
 export const RouteUrlDecorator = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): URL => {
-    const request = ctx.switchToHttp().getRequest();
+    const request: Request = ctx.switchToHttp().getRequest();
     return getRouteUrl(request);
   },
 );

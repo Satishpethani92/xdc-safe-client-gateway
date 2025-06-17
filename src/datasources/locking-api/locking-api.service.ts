@@ -6,9 +6,13 @@ import {
 } from '@/datasources/network/network.service.interface';
 import { Page } from '@/domain/entities/page.entity';
 import { ILockingApi } from '@/domain/interfaces/locking-api.interface';
-import { LockingEvent } from '@/domain/locking/entities/locking-event.entity';
-import { Rank } from '@/domain/locking/entities/rank.entity';
+import { Campaign } from '@/domain/community/entities/campaign.entity';
+import { CampaignActivity } from '@/domain/community/entities/campaign-activity.entity';
+import { CampaignRank } from '@/domain/community/entities/campaign-rank.entity';
+import { LockingEvent } from '@/domain/community/entities/locking-event.entity';
+import { LockingRank } from '@/domain/community/entities/locking-rank.entity';
 import { Inject } from '@nestjs/common';
+import type { Raw } from '@/validation/entities/raw.entity';
 
 export class LockingApi implements ILockingApi {
   private readonly baseUri: string;
@@ -24,10 +28,82 @@ export class LockingApi implements ILockingApi {
       this.configurationService.getOrThrow<string>('locking.baseUri');
   }
 
-  async getRank(safeAddress: `0x${string}`): Promise<Rank> {
+  async getCampaignById(resourceId: string): Promise<Raw<Campaign>> {
+    try {
+      const url = `${this.baseUri}/api/v1/campaigns/${resourceId}`;
+      const { data } = await this.networkService.get<Campaign>({ url });
+      return data;
+    } catch (error) {
+      throw this.httpErrorFactory.from(error);
+    }
+  }
+
+  async getCampaigns(args: {
+    limit?: number;
+    offset?: number;
+  }): Promise<Raw<Page<Campaign>>> {
+    try {
+      const url = `${this.baseUri}/api/v1/campaigns`;
+      const { data } = await this.networkService.get<Page<Campaign>>({
+        url,
+        networkRequest: {
+          params: {
+            limit: args.limit,
+            offset: args.offset,
+          },
+        },
+      });
+      return data;
+    } catch (error) {
+      throw this.httpErrorFactory.from(error);
+    }
+  }
+
+  async getCampaignActivities(args: {
+    resourceId: string;
+    holder?: `0x${string}`;
+    limit?: number;
+    offset?: number;
+  }): Promise<Raw<Page<CampaignActivity>>> {
+    try {
+      const url = `${this.baseUri}/api/v1/campaigns/${args.resourceId}/activities`;
+      const { data } = await this.networkService.get<
+        Raw<Page<CampaignActivity>>
+      >({
+        url,
+        networkRequest: {
+          params: {
+            holder: args.holder,
+            limit: args.limit,
+            offset: args.offset,
+          },
+        },
+      });
+      return data;
+    } catch (error) {
+      throw this.httpErrorFactory.from(error);
+    }
+  }
+
+  async getCampaignRank(args: {
+    resourceId: string;
+    safeAddress: `0x${string}`;
+  }): Promise<Raw<CampaignRank>> {
+    try {
+      const url = `${this.baseUri}/api/v1/campaigns/${args.resourceId}/leaderboard/${args.safeAddress}`;
+      const { data } = await this.networkService.get<CampaignRank>({
+        url,
+      });
+      return data;
+    } catch (error) {
+      throw this.httpErrorFactory.from(error);
+    }
+  }
+
+  async getLockingRank(safeAddress: `0x${string}`): Promise<Raw<LockingRank>> {
     try {
       const url = `${this.baseUri}/api/v1/leaderboard/${safeAddress}`;
-      const { data } = await this.networkService.get<Rank>({ url });
+      const { data } = await this.networkService.get<LockingRank>({ url });
       return data;
     } catch (error) {
       throw this.httpErrorFactory.from(error);
@@ -37,10 +113,32 @@ export class LockingApi implements ILockingApi {
   async getLeaderboard(args: {
     limit?: number;
     offset?: number;
-  }): Promise<Page<Rank>> {
+  }): Promise<Raw<Page<LockingRank>>> {
     try {
       const url = `${this.baseUri}/api/v1/leaderboard`;
-      const { data } = await this.networkService.get<Page<Rank>>({
+      const { data } = await this.networkService.get<Page<LockingRank>>({
+        url,
+        networkRequest: {
+          params: {
+            limit: args.limit,
+            offset: args.offset,
+          },
+        },
+      });
+      return data;
+    } catch (error) {
+      throw this.httpErrorFactory.from(error);
+    }
+  }
+
+  async getCampaignLeaderboard(args: {
+    resourceId: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Raw<Page<CampaignRank>>> {
+    try {
+      const url = `${this.baseUri}/api/v1/campaigns/${args.resourceId}/leaderboard`;
+      const { data } = await this.networkService.get<Page<CampaignRank>>({
         url,
         networkRequest: {
           params: {
@@ -59,7 +157,7 @@ export class LockingApi implements ILockingApi {
     safeAddress: `0x${string}`;
     limit?: number;
     offset?: number;
-  }): Promise<Page<LockingEvent>> {
+  }): Promise<Raw<Page<LockingEvent>>> {
     try {
       const url = `${this.baseUri}/api/v1/all-events/${args.safeAddress}`;
       const { data } = await this.networkService.get<Page<LockingEvent>>({

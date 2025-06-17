@@ -1,7 +1,8 @@
 import { faker } from '@faker-js/faker';
-import { Operation } from '@/domain/safe/entities/operation.entity';
-import { Builder, IBuilder } from '@/__tests__/builder';
-import { ProposeTransactionDto } from '@/routes/transactions/entities/propose-transaction.dto.entity';
+import type { Operation } from '@/domain/safe/entities/operation.entity';
+import type { IBuilder } from '@/__tests__/builder';
+import { Builder } from '@/__tests__/builder';
+import type { ProposeTransactionDto } from '@/routes/transactions/entities/propose-transaction.dto.entity';
 import { getAddress } from 'viem';
 
 export function proposeTransactionDtoBuilder(): IBuilder<ProposeTransactionDto> {
@@ -23,7 +24,7 @@ export function proposeTransactionDtoBuilder(): IBuilder<ProposeTransactionDto> 
     .with('sender', getAddress(faker.finance.ethereumAddress()))
     .with(
       'signature',
-      faker.string.hexadecimal({ length: 32 }) as `0x${string}`,
+      faker.string.hexadecimal({ length: 130 }) as `0x${string}`,
     )
     .with('origin', faker.word.sample());
 }

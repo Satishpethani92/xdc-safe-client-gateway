@@ -1,5 +1,6 @@
 import { faker } from '@faker-js/faker';
-import configuration from '@/config/entities/configuration';
+import type configuration from '@/config/entities/configuration';
+import { getAddress } from 'viem';
 
 export default (): ReturnType<typeof configuration> => ({
   about: {
@@ -7,92 +8,55 @@ export default (): ReturnType<typeof configuration> => ({
     version: faker.system.semver(),
     buildNumber: faker.string.numeric(),
   },
-  alerts: {
-    baseUri: faker.internet.url({ appendSlash: false }),
-    signingKey: faker.string.nanoid(32),
-    apiKey: faker.string.hexadecimal({ length: 32 }),
-    account: faker.string.sample(),
-    project: faker.string.sample(),
+  accounts: {
+    creationRateLimitPeriodSeconds: faker.number.int(),
+    creationRateLimitCalls: faker.number.int(),
+    counterfactualSafes: {
+      creationRateLimitPeriodSeconds: faker.number.int(),
+      creationRateLimitCalls: faker.number.int(),
+    },
+    encryption: {
+      type: faker.string.sample(),
+      awsKms: {
+        algorithm: faker.string.alphanumeric(),
+        keyId: faker.string.uuid(),
+      },
+      local: {
+        algorithm: faker.string.alphanumeric(),
+        key: faker.string.alphanumeric(),
+        iv: faker.string.alphanumeric(),
+      },
+    },
   },
-  applicationPort: faker.internet.port().toString(),
+  amqp: {
+    url: faker.internet.url({ appendSlash: false }),
+    exchange: { name: faker.string.sample(), mode: faker.string.sample() },
+    queue: faker.string.sample(),
+    prefetch: faker.number.int(),
+    heartbeatIntervalInSeconds: 60,
+    reconnectTimeInSeconds: 5,
+  },
+  application: {
+    isProduction: faker.datatype.boolean(),
+    runMigrations: true,
+    port: faker.internet.port().toString(),
+  },
   auth: {
     token: faker.string.hexadecimal({ length: 32 }),
+    nonceTtlSeconds: faker.number.int(),
+    maxValidityPeriodSeconds: faker.number.int({ min: 1, max: 60 * 1_000 }),
   },
   balances: {
-    balancesTtlSeconds: faker.number.int(),
     providers: {
       safe: {
         prices: {
           baseUri: faker.internet.url({ appendSlash: false }),
           apiKey: faker.string.hexadecimal({ length: 32 }),
           pricesTtlSeconds: faker.number.int(),
+          nativeCoinPricesTtlSeconds: faker.number.int(),
           notFoundPriceTtlSeconds: faker.number.int(),
-          chains: {
-            1: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            10: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            100: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            1101: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            11155111: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            1313161554: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            137: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            324: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            42161: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            42220: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            43114: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            5: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            56: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            8453: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            84531: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-            84532: {
-              nativeCoin: faker.string.sample(),
-              chainName: faker.string.sample(),
-            },
-          },
+          highRefreshRateTokens: [],
+          highRefreshRateTokensTtlSeconds: faker.number.int(),
         },
       },
       zerion: {
@@ -102,12 +66,14 @@ export default (): ReturnType<typeof configuration> => ({
           1: { chainName: faker.string.sample() },
           10: { chainName: faker.string.sample() },
           100: { chainName: faker.string.sample() },
+          1101: { chainName: faker.string.sample() },
           1313161554: { chainName: faker.string.sample() },
           137: { chainName: faker.string.sample() },
           324: { chainName: faker.string.sample() },
           42161: { chainName: faker.string.sample() },
           42220: { chainName: faker.string.sample() },
           43114: { chainName: faker.string.sample() },
+          534352: { chainName: faker.string.sample() },
           56: { chainName: faker.string.sample() },
           8453: { chainName: faker.string.sample() },
         },
@@ -124,23 +90,63 @@ export default (): ReturnType<typeof configuration> => ({
           ]),
         ),
         limitPeriodSeconds: faker.number.int({ min: 1, max: 10 }),
-        limitCalls: faker.number.int({ min: 1, max: 10 }),
+        limitCalls: faker.number.int({ min: 1, max: 5 }),
       },
     },
   },
+  blockchain: {
+    blocklist: faker.helpers.multiple(
+      () => getAddress(faker.finance.ethereumAddress()),
+      { count: { min: 1, max: 5 } },
+    ),
+    infura: {
+      apiKey: faker.string.hexadecimal({ length: 32 }),
+    },
+  },
+  contracts: {
+    trustedForDelegateCall: {
+      maxSequentialPages: faker.number.int({ min: 1, max: 5 }),
+    },
+  },
   db: {
-    postgres: {
-      host: process.env.POSTGRES_TEST_HOST || 'localhost',
-      port: process.env.POSTGRES_TEST_PORT || '5433',
-      database: process.env.POSTGRES_TEST_DB || 'test-db',
-      username: process.env.POSTGRES_TEST_USER || 'postgres',
-      password: process.env.POSTGRES_TEST_PASSWORD || 'postgres',
-      ssl: {
-        enabled: true,
-        requestCert: true,
-        rejectUnauthorized: true,
-        caPath: process.env.POSTGRES_SSL_CA_PATH,
+    migrator: {
+      executeMigrations: true,
+      numberOfRetries: process.env.DB_TEST_MIGRATIONS_NUMBER_OF_RETRIES ?? 5,
+      retryAfterMs: process.env.DB_TEST_MIGRATIONS_RETRY_AFTER_MS ?? 1000, // Milliseconds
+    },
+    orm: {
+      autoLoadEntities: true,
+      manualInitialization: true,
+      migrationsRun: false,
+      migrationsTableName: '_migrations',
+      cache: false,
+    },
+    connection: {
+      postgres: {
+        schema: process.env.POSTGRES_SCHEMA || 'main',
+        host: process.env.POSTGRES_TEST_HOST || 'localhost',
+        port: process.env.POSTGRES_TEST_PORT || '5433',
+        database: process.env.POSTGRES_TEST_DB || 'test-db',
+        username: process.env.POSTGRES_TEST_USER || 'postgres',
+        password: process.env.POSTGRES_TEST_PASSWORD || 'postgres',
+        ssl: {
+          enabled: true,
+          requestCert: true,
+          rejectUnauthorized: true,
+          caPath:
+            process.env.POSTGRES_SSL_CA_PATH || 'db_config/test/server.crt',
+        },
       },
+    },
+  },
+  earn: {
+    testnet: {
+      baseUri: faker.internet.url({ appendSlash: false }),
+      apiKey: faker.string.hexadecimal({ length: 32 }),
+    },
+    mainnet: {
+      baseUri: faker.internet.url({ appendSlash: false }),
+      apiKey: faker.string.hexadecimal({ length: 32 }),
     },
   },
   email: {
@@ -149,18 +155,14 @@ export default (): ReturnType<typeof configuration> => ({
     apiKey: faker.string.hexadecimal({ length: 32 }),
     fromEmail: faker.internet.email(),
     fromName: faker.person.fullName(),
-    templates: {
-      recoveryTx: faker.string.alphanumeric(),
-      unknownRecoveryTx: faker.string.alphanumeric(),
-      verificationCode: faker.string.alphanumeric(),
-    },
-    verificationCode: {
-      resendLockWindowMs: faker.number.int(),
-      ttlMs: faker.number.int(),
-    },
   },
   expirationTimeInSeconds: {
+    deviatePercent: faker.number.int({ min: 10, max: 20 }),
     default: faker.number.int(),
+    rpc: faker.number.int(),
+    hoodi: faker.number.int(),
+    indexing: faker.number.int(),
+    staking: faker.number.int(),
     notFound: {
       default: faker.number.int(),
       contract: faker.number.int(),
@@ -169,25 +171,66 @@ export default (): ReturnType<typeof configuration> => ({
   },
   express: { jsonLimit: '1mb' },
   features: {
-    richFragments: true,
-    email: true,
+    email: false,
     zerionBalancesChainIds: ['137'],
-    locking: true,
-    relay: true,
-    swapsDecoding: true,
-    historyDebugLogs: false,
+    debugLogs: false,
+    configHooksDebugLogs: false,
+    auth: false,
+    delegatesV2: false,
+    counterfactualBalances: false,
+    accounts: false,
+    users: false,
+    hookHttpPostEvent: false,
+    improvedAddressPoisoning: false,
+    signatureVerification: {
+      api: true,
+      proposal: true,
+    },
+    hashVerification: {
+      api: true,
+      proposal: true,
+    },
+    messageVerification: true,
+    ethSign: true,
+    trustedDelegateCall: false,
+    trustedForDelegateCallContractsList: false,
+    filterValueParsing: false,
+    vaultTransactionsMapping: false,
+    cacheInFlightRequests: false,
   },
   httpClient: { requestTimeout: faker.number.int() },
   locking: {
     baseUri: faker.internet.url({ appendSlash: false }),
+    eligibility: {
+      fingerprintEncryptionKey: faker.string.uuid(),
+      nonEligibleCountryCodes: faker.helpers.multiple(
+        () => faker.location.countryCode(),
+        { count: { min: 1, max: 5 } },
+      ),
+    },
+  },
+  jwt: {
+    issuer: process.env.JWT_TEST_ISSUER || 'dummy-issuer',
+    secret: process.env.JWT_TEST_SECRET || 'dummy-secret',
   },
   log: {
     level: 'debug',
     silent: process.env.LOG_SILENT?.toLowerCase() === 'true',
+    prettyColorize: process.env.LOG_PRETTY_COLORIZE?.toLowerCase() === 'true',
   },
   mappings: {
+    imitation: {
+      lookupDistance: faker.number.int(),
+      prefixLength: faker.number.int(),
+      suffixLength: faker.number.int(),
+      valueTolerance: faker.number.bigInt(),
+      echoLimit: faker.number.bigInt(),
+    },
     history: {
       maxNestedTransfers: faker.number.int({ min: 1, max: 5 }),
+    },
+    transactionData: {
+      maxTokenInfoIndexSize: faker.number.int({ min: 1, max: 5 }),
     },
     safe: {
       maxOverviews: faker.number.int({ min: 1, max: 5 }),
@@ -196,20 +239,48 @@ export default (): ReturnType<typeof configuration> => ({
   owners: {
     ownersTtlSeconds: faker.number.int(),
   },
+  pushNotifications: {
+    baseUri: faker.internet.url({ appendSlash: false }),
+    project: faker.word.noun(),
+    serviceAccount: {
+      clientEmail: faker.internet.email(),
+      privateKey: faker.string.alphanumeric(),
+    },
+    getSubscribersBySafeTtlMilliseconds: faker.number.int({ min: 1, max: 100 }),
+  },
   redis: {
+    user: process.env.REDIS_USER,
+    pass: process.env.REDIS_PASS,
     host: process.env.REDIS_HOST || 'localhost',
     port: process.env.REDIS_PORT || '6379',
+    disableOfflineQueue:
+      process.env.REDIS_DISABLE_OFFLINE_QUEUE?.toString() === 'true',
   },
   relay: {
     baseUri: faker.internet.url({ appendSlash: false }),
     limit: faker.number.int({ min: 1 }),
     ttlSeconds: faker.number.int(),
     apiKey: {
+      10: faker.string.hexadecimal({ length: 32 }),
+      56: faker.string.hexadecimal({ length: 32 }),
       100: faker.string.hexadecimal({ length: 32 }),
+      137: faker.string.hexadecimal({ length: 32 }),
+      1101: faker.string.hexadecimal({ length: 32 }),
+      8453: faker.string.hexadecimal({ length: 32 }),
+      42161: faker.string.hexadecimal({ length: 32 }),
+      43114: faker.string.hexadecimal({ length: 32 }),
+      59144: faker.string.hexadecimal({ length: 32 }),
+      81457: faker.string.hexadecimal({ length: 32 }),
       11155111: faker.string.hexadecimal({ length: 32 }),
     },
   },
   safeConfig: {
+    baseUri: faker.internet.url({ appendSlash: false }),
+    chains: {
+      maxSequentialPages: faker.number.int(),
+    },
+  },
+  safeDataDecoder: {
     baseUri: faker.internet.url({ appendSlash: false }),
   },
   safeTransaction: {
@@ -218,12 +289,57 @@ export default (): ReturnType<typeof configuration> => ({
   safeWebApp: {
     baseUri: faker.internet.url({ appendSlash: false }),
   },
+  spaces: {
+    addressBooks: {
+      maxItems: faker.number.int({ min: 10, max: 20 }),
+    },
+    maxSafesPerSpace: faker.number.int({ min: 5, max: 10 }),
+    maxSpaceCreationsPerUser: faker.number.int({ min: 100, max: 200 }),
+    maxInvites: faker.number.int({ min: 5, max: 10 }),
+    rateLimit: {
+      creation: {
+        max: faker.number.int({ min: 100, max: 200 }),
+        windowSeconds: faker.number.int({ min: 100, max: 200 }),
+      },
+      addressBookUpsertion: {
+        max: faker.number.int({ min: 100, max: 200 }),
+        windowSeconds: faker.number.int({ min: 100, max: 200 }),
+      },
+    },
+  },
+  staking: {
+    testnet: {
+      baseUri: faker.internet.url({ appendSlash: false }),
+      apiKey: faker.string.hexadecimal({ length: 32 }),
+    },
+    mainnet: {
+      baseUri: faker.internet.url({ appendSlash: false }),
+      apiKey: faker.string.hexadecimal({ length: 32 }),
+    },
+  },
   swaps: {
     api: {
-      1: faker.internet.url(),
-      100: faker.internet.url(),
-      11155111: faker.internet.url(),
+      1: faker.internet.url({ appendSlash: false }),
+      100: faker.internet.url({ appendSlash: false }),
+      8453: faker.internet.url({ appendSlash: false }),
+      42161: faker.internet.url({ appendSlash: false }),
+      11155111: faker.internet.url({ appendSlash: false }),
     },
-    explorerBaseUri: faker.internet.url(),
+    explorerBaseUri: faker.internet.url({ appendSlash: true }),
+    restrictApps: false,
+    allowedApps: [],
+    maxNumberOfParts: faker.number.int(),
+  },
+  targetedMessaging: {
+    fileStorage: {
+      type: 'local',
+      aws: {
+        bucketName: faker.string.alphanumeric(),
+        basePath: faker.system.directoryPath(),
+      },
+      local: {
+        baseDir: 'assets/targeted-messaging',
+      },
+    },
   },
 });

@@ -30,8 +30,6 @@ export class MultisigTransactionExecutionDetailsMapper {
   ): Promise<MultisigExecutionDetails> {
     const signers = safe.owners.map((owner) => new AddressInfo(owner));
     const gasToken = transaction.gasToken ?? NULL_ADDRESS;
-    const confirmationsRequired =
-      transaction.confirmationsRequired ?? safe.threshold;
     const confirmations = !transaction.confirmations
       ? []
       : transaction.confirmations.map(
@@ -44,6 +42,9 @@ export class MultisigTransactionExecutionDetailsMapper {
         );
     const proposer = transaction.proposer
       ? new AddressInfo(transaction.proposer)
+      : null;
+    const proposedByDelegate = transaction.proposedByDelegate
+      ? new AddressInfo(transaction.proposedByDelegate)
       : null;
 
     const [gasTokenInfo, executor, refundReceiver, rejectors] =
@@ -75,12 +76,13 @@ export class MultisigTransactionExecutionDetailsMapper {
       transaction.safeTxHash,
       executor,
       signers,
-      confirmationsRequired,
+      transaction.confirmationsRequired,
       confirmations,
       rejectors,
       gasTokenInfo,
       transaction.trusted,
       proposer,
+      proposedByDelegate,
     );
   }
 
@@ -102,7 +104,7 @@ export class MultisigTransactionExecutionDetailsMapper {
   private async _getRejectors(
     chainId: string,
     transaction: MultisigTransaction,
-  ): Promise<AddressInfo[]> {
+  ): Promise<Array<AddressInfo>> {
     const rejectionTxsPage = await this.safeRepository.getMultisigTransactions({
       chainId: chainId,
       safeAddress: transaction.safe,

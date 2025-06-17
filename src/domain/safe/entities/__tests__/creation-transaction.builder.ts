@@ -1,7 +1,7 @@
 import { faker } from '@faker-js/faker';
-import { Builder, IBuilder } from '@/__tests__/builder';
-import { dataDecodedBuilder } from '@/domain/data-decoder/entities/__tests__/data-decoded.builder';
-import { CreationTransaction } from '@/domain/safe/entities/creation-transaction.entity';
+import type { IBuilder } from '@/__tests__/builder';
+import { Builder } from '@/__tests__/builder';
+import type { CreationTransaction } from '@/domain/safe/entities/creation-transaction.entity';
 import { getAddress } from 'viem';
 
 export function creationTransactionBuilder(): IBuilder<CreationTransaction> {
@@ -12,7 +12,7 @@ export function creationTransactionBuilder(): IBuilder<CreationTransaction> {
     .with('factoryAddress', getAddress(faker.finance.ethereumAddress()))
     .with('masterCopy', getAddress(faker.finance.ethereumAddress()))
     .with('setupData', faker.string.hexadecimal() as `0x${string}`)
-    .with('dataDecoded', dataDecodedBuilder().build());
+    .with('saltNonce', faker.string.numeric());
 }
 
 export function toJson(creationTransaction: CreationTransaction): unknown {

@@ -4,7 +4,7 @@ updates:
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
-      interval: 'weekly'
+      interval: 'monthly'
       day: 'monday'
     groups:
       nest-js-core:
@@ -13,15 +13,18 @@ updates:
           - '@nestjs/core'
           - '@nestjs/platform-express'
           - '@nestjs/testing'
+      aws-sdk:
+        patterns:
+          - '@aws-sdk/*'
 
   - package-ecosystem: 'docker'
     directory: '/'
     schedule:
-      interval: 'weekly'
+      interval: 'monthly'
       day: 'monday'
 
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
-      interval: 'weekly'
+      interval: 'monthly'
       day: 'monday'

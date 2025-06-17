@@ -5,8 +5,10 @@ import {
 } from '@/routes/transactions/entities/transfers/transfer.entity';
 
 export class Erc721Transfer extends Transfer {
+  @ApiProperty({ enum: [TransferType.Erc721] })
+  override type = TransferType.Erc721;
   @ApiProperty()
-  tokenAddress: string;
+  tokenAddress: `0x${string}`;
   @ApiProperty()
   tokenId: string;
   @ApiPropertyOptional({ type: String, nullable: true })
@@ -19,7 +21,7 @@ export class Erc721Transfer extends Transfer {
   trusted: boolean | null;
 
   constructor(
-    tokenAddress: string,
+    tokenAddress: `0x${string}`,
     tokenId: string,
     tokenName: string | null = null,
     tokenSymbol: string | null = null,

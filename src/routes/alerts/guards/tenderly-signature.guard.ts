@@ -5,7 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Request } from 'express';
-import * as crypto from 'crypto';
+import crypto from 'crypto';
 import { IConfigurationService } from '@/config/configuration.service.interface';
 
 @Injectable()
@@ -19,12 +19,13 @@ export class TenderlySignatureGuard implements CanActivate {
     @Inject(IConfigurationService)
     private readonly configurationService: IConfigurationService,
   ) {
-    this.signingKey =
-      this.configurationService.getOrThrow<string>('alerts.signingKey');
+    this.signingKey = this.configurationService.getOrThrow<string>(
+      'alerts-route.signingKey',
+    );
   }
 
   canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest();
+    const request: Request = context.switchToHttp().getRequest();
 
     const signature = this.getSignature(request.headers);
     const digest = this.getDigest(request);

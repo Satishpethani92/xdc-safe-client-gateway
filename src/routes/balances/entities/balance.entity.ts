@@ -1,6 +1,16 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { Token } from '@/routes/balances/entities/token.entity';
+import {
+  ApiExtraModels,
+  ApiProperty,
+  ApiPropertyOptional,
+  getSchemaPath,
+} from '@nestjs/swagger';
+import {
+  NativeToken,
+  Erc20Token,
+  Erc721Token,
+} from '@/routes/balances/entities/token.entity';
 
+@ApiExtraModels(NativeToken, Erc20Token, Erc721Token)
 export class Balance {
   @ApiProperty()
   balance!: string;
@@ -8,6 +18,14 @@ export class Balance {
   fiatBalance!: string;
   @ApiProperty()
   fiatConversion!: string;
-  @ApiProperty()
-  tokenInfo!: Token;
+  @ApiProperty({
+    oneOf: [
+      { $ref: getSchemaPath(NativeToken) },
+      { $ref: getSchemaPath(Erc20Token) },
+      { $ref: getSchemaPath(Erc721Token) },
+    ],
+  })
+  tokenInfo!: NativeToken | Erc20Token | Erc721Token;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  fiatBalance24hChange!: string | null;
 }

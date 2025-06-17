@@ -1,7 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ModuleTransaction } from '@/domain/safe/entities/module-transaction.entity';
-import { MultisigTransaction } from '@/domain/safe/entities/multisig-transaction.entity';
-import { DataDecoded } from '@/domain/data-decoder/entities/data-decoded.entity';
+import { DataDecoded } from '@/domain/data-decoder/v2/entities/data-decoded.entity';
 import { AddressInfoHelper } from '@/routes/common/address-info/address-info.helper';
 import { NULL_ADDRESS } from '@/routes/common/constants';
 import { AddressInfo } from '@/routes/common/entities/address-info.entity';
@@ -17,6 +15,7 @@ import { SetGuard } from '@/routes/transactions/entities/settings-changes/set-gu
 import { SettingsChange } from '@/routes/transactions/entities/settings-changes/settings-change.entity';
 import { SwapOwner } from '@/routes/transactions/entities/settings-changes/swap-owner.entity';
 import { DataDecodedParamHelper } from '@/routes/transactions/mappers/common/data-decoded-param.helper';
+import { getAddress } from 'viem';
 
 @Injectable()
 export class SettingsChangeMapper {
@@ -58,7 +57,7 @@ export class SettingsChangeMapper {
     if (typeof handler !== 'string') return null;
     const addressInfo = await this.addressInfoHelper.getOrDefault(
       chainId,
-      handler,
+      getAddress(handler),
       ['CONTRACT'],
     );
     return new SetFallbackHandler(addressInfo);
@@ -123,7 +122,7 @@ export class SettingsChangeMapper {
 
     const implementationInfo = await this.addressInfoHelper.getOrDefault(
       chainId,
-      implementation,
+      getAddress(implementation),
       ['CONTRACT'],
     );
     return new ChangeMasterCopy(implementationInfo);
@@ -142,7 +141,7 @@ export class SettingsChangeMapper {
 
     const moduleInfo = await this.addressInfoHelper.getOrDefault(
       chainId,
-      module,
+      getAddress(module),
       ['CONTRACT'],
     );
     return new EnableModule(moduleInfo);
@@ -161,7 +160,7 @@ export class SettingsChangeMapper {
 
     const moduleInfo = await this.addressInfoHelper.getOrDefault(
       chainId,
-      module,
+      getAddress(module),
       ['CONTRACT'],
     );
     return new DisableModule(moduleInfo);
@@ -193,7 +192,7 @@ export class SettingsChangeMapper {
     if (guardValue !== NULL_ADDRESS) {
       const guardAddressInfo = await this.addressInfoHelper.getOrDefault(
         chainId,
-        guardValue,
+        getAddress(guardValue),
         ['CONTRACT'],
       );
       return new SetGuard(guardAddressInfo);
@@ -204,10 +203,8 @@ export class SettingsChangeMapper {
 
   async mapSettingsChange(
     chainId: string,
-    transaction: MultisigTransaction | ModuleTransaction,
+    dataDecoded: DataDecoded | null,
   ): Promise<SettingsChange | null> {
-    const { dataDecoded } = transaction;
-
     switch (dataDecoded?.method) {
       case SettingsChangeMapper.SET_FALLBACK_HANDLER:
         return this.handleFallbackHandler(chainId, dataDecoded);

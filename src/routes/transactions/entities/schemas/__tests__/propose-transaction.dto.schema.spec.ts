@@ -1,4 +1,4 @@
-import { Operation } from '@/domain/safe/entities/operation.entity';
+import type { Operation } from '@/domain/safe/entities/operation.entity';
 import { proposeTransactionDtoBuilder } from '@/routes/transactions/entities/__tests__/propose-transaction.dto.builder';
 import { ProposeTransactionDtoSchema } from '@/routes/transactions/entities/schemas/propose-transaction.dto.schema';
 import { faker } from '@faker-js/faker';
@@ -28,8 +28,8 @@ describe('ProposeTransactionDtoSchema', () => {
         new ZodError([
           {
             code: 'custom',
+            message: 'Invalid address',
             path: [field],
-            message: 'Invalid input',
           },
         ]),
       );
@@ -85,45 +85,81 @@ describe('ProposeTransactionDtoSchema', () => {
         new ZodError([
           {
             code: 'custom',
-            message: 'Invalid input',
+            message: 'Invalid base-10 numeric string',
             path: [field],
           },
         ]),
       );
     });
   });
-  ['safeTxHash' as const, 'signature' as const].forEach((field) => {
-    it(`should validate if ${field} is hex`, () => {
-      const proposeTransactionDto = proposeTransactionDtoBuilder()
-        .with(field, faker.string.hexadecimal() as `0x${string}`)
-        .build();
 
-      const result = ProposeTransactionDtoSchema.safeParse(
-        proposeTransactionDto,
-      );
+  it('should validate if safeTxHash is hex', () => {
+    const proposeTransactionDto = proposeTransactionDtoBuilder()
+      .with('safeTxHash', faker.string.hexadecimal() as `0x${string}`)
+      .build();
 
-      expect(result.success).toBe(true);
-    });
+    const result = ProposeTransactionDtoSchema.safeParse(proposeTransactionDto);
 
-    it(`should not allow non-hex ${field}`, () => {
-      const proposeTransactionDto = proposeTransactionDtoBuilder()
-        .with(field, faker.string.alphanumeric() as `0x${string}`)
-        .build();
+    expect(result.success).toBe(true);
+  });
 
-      const result = ProposeTransactionDtoSchema.safeParse(
-        proposeTransactionDto,
-      );
+  it('should not allow non-hex safeTxHash', () => {
+    const proposeTransactionDto = proposeTransactionDtoBuilder()
+      .with('safeTxHash', faker.string.alphanumeric() as `0x${string}`)
+      .build();
 
-      expect(!result.success && result.error).toStrictEqual(
-        new ZodError([
-          {
-            code: 'custom',
-            message: 'Invalid input',
-            path: [field],
-          },
-        ]),
-      );
-    });
+    const result = ProposeTransactionDtoSchema.safeParse(proposeTransactionDto);
+
+    expect(!result.success && result.error).toStrictEqual(
+      new ZodError([
+        {
+          code: 'custom',
+          message: 'Invalid "0x" notated hex string',
+          path: ['safeTxHash'],
+        },
+      ]),
+    );
+  });
+
+  it('should validate if signature is hex', () => {
+    const proposeTransactionDto = proposeTransactionDtoBuilder()
+      .with(
+        'signature',
+        faker.string.hexadecimal({ length: 130 }) as `0x${string}`,
+      )
+      .build();
+
+    const result = ProposeTransactionDtoSchema.safeParse(proposeTransactionDto);
+
+    expect(result.success).toBe(true);
+  });
+
+  it('should not allow non-hex signature', () => {
+    const proposeTransactionDto = proposeTransactionDtoBuilder()
+      .with('signature', faker.string.alphanumeric() as `0x${string}`)
+      .build();
+
+    const result = ProposeTransactionDtoSchema.safeParse(proposeTransactionDto);
+
+    expect(!result.success && result.error).toStrictEqual(
+      new ZodError([
+        {
+          code: 'custom',
+          message: 'Invalid "0x" notated hex string',
+          path: ['signature'],
+        },
+        {
+          code: 'custom',
+          message: 'Invalid hex bytes',
+          path: ['signature'],
+        },
+        {
+          code: 'custom',
+          message: 'Invalid signature',
+          path: ['signature'],
+        },
+      ]),
+    );
   });
 
   it.each([

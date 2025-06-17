@@ -1,5 +1,6 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import * as request from 'supertest';
+import type { TestingModule } from '@nestjs/testing';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
 import { AppModule } from '@/app.module';
 import { CacheModule } from '@/datasources/cache/cache.module';
 import { TestCacheModule } from '@/datasources/cache/__tests__/test.cache.module';
@@ -9,18 +10,14 @@ import { TestLoggingModule } from '@/logging/__tests__/test.logging.module';
 import { NetworkModule } from '@/datasources/network/network.module';
 import { TestNetworkModule } from '@/datasources/network/__tests__/test.network.module';
 import { TestAppProvider } from '@/__tests__/test-app.provider';
-import { AccountDataSourceModule } from '@/datasources/account/account.datasource.module';
-import { TestAccountDataSourceModule } from '@/datasources/account/__tests__/test.account.datasource.module';
 import { IConfigurationService } from '@/config/configuration.service.interface';
-import {
-  INetworkService,
-  NetworkService,
-} from '@/datasources/network/network.service.interface';
-import { INestApplication } from '@nestjs/common';
+import type { INetworkService } from '@/datasources/network/network.service.interface';
+import { NetworkService } from '@/datasources/network/network.service.interface';
+import type { INestApplication } from '@nestjs/common';
 import { faker } from '@faker-js/faker';
 import { chainBuilder } from '@/domain/chains/entities/__tests__/chain.builder';
 import { safeBuilder } from '@/domain/safe/entities/__tests__/safe.builder';
-import { Hex, getAddress } from 'viem';
+import { getAddress } from 'viem';
 import {
   addOwnerWithThresholdEncoder,
   changeThresholdEncoder,
@@ -43,16 +40,33 @@ import {
   multiSendTransactionsEncoder,
 } from '@/domain/contracts/__tests__/encoders/multi-send-encoder.builder';
 import {
-  getMultiSendCallOnlyDeployment,
-  getMultiSendDeployment,
-  getProxyFactoryDeployment,
-  getSafeL2SingletonDeployment,
-  getSafeSingletonDeployment,
-} from '@safe-global/safe-deployments';
+  getMultiSendCallOnlyDeployments,
+  getMultiSendDeployments,
+  getProxyFactoryDeployments,
+  getSafeL2SingletonDeployments,
+  getSafeSingletonDeployments,
+} from '@/domain/common/utils/deployments';
 import { createProxyWithNonceEncoder } from '@/domain/relay/contracts/__tests__/encoders/proxy-factory-encoder.builder';
 import { getDeploymentVersionsByChainIds } from '@/__tests__/deployments.helper';
+import { TestQueuesApiModule } from '@/datasources/queues/__tests__/test.queues-api.module';
+import { QueuesApiModule } from '@/datasources/queues/queues-api.module';
+import type { Server } from 'net';
+import { TestPostgresDatabaseModule } from '@/datasources/db/__tests__/test.postgres-database.module';
+import { PostgresDatabaseModule } from '@/datasources/db/v1/postgres-database.module';
+import { PostgresDatabaseModuleV2 } from '@/datasources/db/v2/postgres-database.module';
+import { TestPostgresDatabaseModuleV2 } from '@/datasources/db/v2/test.postgres-database.module';
+import {
+  execTransactionFromModuleEncoder,
+  executeNextTxEncoder,
+} from '@/domain/alerts/contracts/__tests__/encoders/delay-modifier-encoder.builder';
+import { TestTargetedMessagingDatasourceModule } from '@/datasources/targeted-messaging/__tests__/test.targeted-messaging.datasource.module';
+import { TargetedMessagingDatasourceModule } from '@/datasources/targeted-messaging/targeted-messaging.datasource.module';
+import { rawify } from '@/validation/entities/raw.entity';
 
-const supportedChainIds = Object.keys(configuration().relay.apiKey);
+const supportedChainIds = faker.helpers.arrayElements(
+  Object.keys(configuration().relay.apiKey),
+  1,
+);
 
 const SAFE_VERSIONS = getDeploymentVersionsByChainIds(
   'Safe',
@@ -76,7 +90,7 @@ const PROXY_FACTORY_VERSIONS = getDeploymentVersionsByChainIds(
 );
 
 describe('Relay controller', () => {
-  let app: INestApplication;
+  let app: INestApplication<Server>;
   let configurationService: jest.MockedObjectDeep<IConfigurationService>;
   let networkService: jest.MockedObjectDeep<INetworkService>;
   let safeConfigUrl: string;
@@ -88,10 +102,6 @@ describe('Relay controller', () => {
     const defaultConfiguration = configuration();
     const testConfiguration = (): typeof defaultConfiguration => ({
       ...defaultConfiguration,
-      features: {
-        ...defaultConfiguration.features,
-        relay: true,
-      },
       relay: {
         ...defaultConfiguration.relay,
         limit: 5,
@@ -101,14 +111,20 @@ describe('Relay controller', () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule.register(testConfiguration)],
     })
-      .overrideModule(AccountDataSourceModule)
-      .useModule(TestAccountDataSourceModule)
+      .overrideModule(PostgresDatabaseModule)
+      .useModule(TestPostgresDatabaseModule)
+      .overrideModule(TargetedMessagingDatasourceModule)
+      .useModule(TestTargetedMessagingDatasourceModule)
       .overrideModule(CacheModule)
       .useModule(TestCacheModule)
       .overrideModule(RequestScopedLoggingModule)
       .useModule(TestLoggingModule)
       .overrideModule(NetworkModule)
       .useModule(TestNetworkModule)
+      .overrideModule(QueuesApiModule)
+      .useModule(TestQueuesApiModule)
+      .overrideModule(PostgresDatabaseModuleV2)
+      .useModule(TestPostgresDatabaseModuleV2)
       .compile();
 
     configurationService = moduleFixture.get(IConfigurationService);
@@ -127,6 +143,168 @@ describe('Relay controller', () => {
   describe.each(supportedChainIds)('Chain %s', (chainId) => {
     describe('POST /v1/chains/:chainId/relay', () => {
       describe('Relayer', () => {
+        describe('Recovery', () => {
+          describe.each([
+            [
+              'execTransactionFromModule (Proposals)',
+              execTransactionFromModuleEncoder,
+            ],
+            ['executeNextTx (Execution)', executeNextTxEncoder],
+          ])('%s', (_, encoder) => {
+            it('should return 201 when executing a singular transaction', async () => {
+              const chain = chainBuilder()
+                .with('chainId', faker.helpers.arrayElement(supportedChainIds))
+                .build();
+              const safes = faker.helpers.multiple(
+                () => getAddress(faker.finance.ethereumAddress()),
+                { count: { min: 1, max: 4 } },
+              );
+              const version = faker.system.semver();
+              const safeAddress = faker.helpers.arrayElement(safes);
+              const data = encoder()
+                .with('to', safeAddress)
+                .with(
+                  'data',
+                  execTransactionEncoder()
+                    .with('data', addOwnerWithThresholdEncoder().encode())
+                    .encode(),
+                )
+                .encode();
+              const moduleAddress = getAddress(faker.finance.ethereumAddress());
+              const taskId = faker.string.uuid();
+              networkService.get.mockImplementation(({ url }) => {
+                switch (url) {
+                  case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                    return Promise.resolve({
+                      data: rawify(chain),
+                      status: 200,
+                    });
+                  case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                    return Promise.resolve({
+                      data: rawify({ safes }),
+                      status: 200,
+                    });
+                  default:
+                    return Promise.reject(`No matching rule for url: ${url}`);
+                }
+              });
+              networkService.post.mockImplementation(({ url }) => {
+                switch (url) {
+                  case `${relayUrl}/relays/v2/sponsored-call`:
+                    return Promise.resolve({
+                      data: rawify({ taskId }),
+                      status: 200,
+                    });
+                  default:
+                    return Promise.reject(`No matching rule for url: ${url}`);
+                }
+              });
+
+              await request(app.getHttpServer())
+                .post(`/v1/chains/${chain.chainId}/relay`)
+                .send({
+                  version,
+                  to: moduleAddress,
+                  data,
+                })
+                .expect(201)
+                .expect({
+                  taskId,
+                });
+            });
+
+            it('should return 201 when executing a batch of transactions', async () => {
+              const chain = chainBuilder()
+                .with('chainId', faker.helpers.arrayElement(supportedChainIds))
+                .build();
+              const safes = faker.helpers.multiple(
+                () => getAddress(faker.finance.ethereumAddress()),
+                { count: { min: 2, max: 4 } },
+              );
+              // We don't need to test all possible combinations as we only use the address
+              // to check the officiality of the MultiSend. The rest is universal for all.
+              const multiSendVersion = faker.helpers.arrayElement(
+                MULTI_SEND_VERSIONS[chain.chainId],
+              );
+              const [multiSendAddress] = getMultiSendDeployments({
+                chainId: chain.chainId,
+                version: multiSendVersion,
+              });
+              const safeAddress = faker.helpers.arrayElement(safes);
+              const data = encoder()
+                .with('to', multiSendAddress)
+                .with(
+                  'data',
+                  multiSendEncoder()
+                    .with(
+                      'transactions',
+                      multiSendTransactionsEncoder(
+                        [
+                          execTransactionEncoder()
+                            .with(
+                              'data',
+                              addOwnerWithThresholdEncoder().encode(),
+                            )
+                            .encode(),
+                          execTransactionEncoder()
+                            .with('data', changeThresholdEncoder().encode())
+                            .encode(),
+                        ].map((data) => ({
+                          operation: faker.number.int({ min: 0, max: 1 }),
+                          data,
+                          to: safeAddress,
+                          value: faker.number.bigInt(),
+                        })),
+                      ),
+                    )
+                    .encode(),
+                )
+                .encode();
+              const moduleAddress = getAddress(faker.finance.ethereumAddress());
+              const taskId = faker.string.uuid();
+              networkService.get.mockImplementation(({ url }) => {
+                switch (url) {
+                  case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                    return Promise.resolve({
+                      data: rawify(chain),
+                      status: 200,
+                    });
+                  case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                    return Promise.resolve({
+                      data: rawify({ safes }),
+                      status: 200,
+                    });
+                  default:
+                    return Promise.reject(`No matching rule for url: ${url}`);
+                }
+              });
+              networkService.post.mockImplementation(({ url }) => {
+                switch (url) {
+                  case `${relayUrl}/relays/v2/sponsored-call`:
+                    return Promise.resolve({
+                      data: rawify({ taskId }),
+                      status: 200,
+                    });
+                  default:
+                    return Promise.reject(`No matching rule for url: ${url}`);
+                }
+              });
+
+              await request(app.getHttpServer())
+                .post(`/v1/chains/${chain.chainId}/relay`)
+                .send({
+                  version: multiSendVersion,
+                  to: moduleAddress,
+                  data,
+                })
+                .expect(201)
+                .expect({
+                  taskId,
+                });
+            });
+          });
+        });
+
         describe('Safe', () => {
           describe.each(SAFE_VERSIONS[chainId])(
             'v%s execTransaction',
@@ -137,15 +315,21 @@ describe('Relay controller', () => {
                 const safeAddress = getAddress(safe.address);
                 const data = execTransactionEncoder()
                   .with('value', faker.number.bigInt())
-                  .encode() as Hex;
+                  .encode();
                 const taskId = faker.string.uuid();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -153,7 +337,10 @@ describe('Relay controller', () => {
                 networkService.post.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${relayUrl}/relays/v2/sponsored-call`:
-                      return Promise.resolve({ data: { taskId }, status: 200 });
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -177,15 +364,21 @@ describe('Relay controller', () => {
                 const safe = safeBuilder().build();
                 const safeAddress = getAddress(safe.address);
                 const gasLimit = faker.string.numeric({ exclude: '0' });
-                const data = execTransactionEncoder().encode() as Hex;
+                const data = execTransactionEncoder().encode();
                 const taskId = faker.string.uuid();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -193,7 +386,10 @@ describe('Relay controller', () => {
                 networkService.post.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${relayUrl}/relays/v2/sponsored-call`:
-                      return Promise.resolve({ data: { taskId }, status: 200 });
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -262,15 +458,21 @@ describe('Relay controller', () => {
                   const safe = safeBuilder().build();
                   const data = execTransactionEncoder()
                     .with('data', execTransactionData)
-                    .encode() as Hex;
+                    .encode();
                   const taskId = faker.string.uuid();
                   networkService.get.mockImplementation(({ url }) => {
                     switch (url) {
                       case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                        return Promise.resolve({ data: chain, status: 200 });
+                        return Promise.resolve({
+                          data: rawify(chain),
+                          status: 200,
+                        });
                       case `${chain.transactionService}/api/v1/safes/${safe.address}`:
                         // Official mastercopy
-                        return Promise.resolve({ data: safe, status: 200 });
+                        return Promise.resolve({
+                          data: rawify(safe),
+                          status: 200,
+                        });
                       default:
                         return Promise.reject(
                           `No matching rule for url: ${url}`,
@@ -281,7 +483,7 @@ describe('Relay controller', () => {
                     switch (url) {
                       case `${relayUrl}/relays/v2/sponsored-call`:
                         return Promise.resolve({
-                          data: { taskId },
+                          data: rawify({ taskId }),
                           status: 200,
                         });
                       default:
@@ -312,15 +514,21 @@ describe('Relay controller', () => {
                 const data = execTransactionEncoder()
                   .with('to', safeAddress)
                   .with('data', execTransactionEncoder().encode())
-                  .encode() as Hex;
+                  .encode();
                 const taskId = faker.string.uuid();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -328,7 +536,10 @@ describe('Relay controller', () => {
                 networkService.post.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${relayUrl}/relays/v2/sponsored-call`:
-                      return Promise.resolve({ data: { taskId }, status: 200 });
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -377,18 +588,26 @@ describe('Relay controller', () => {
                     multiSendTransactionsEncoder(transactions),
                   )
                   .encode();
-                const to = getMultiSendCallOnlyDeployment({
-                  version,
-                  network: chainId,
-                })!.networkAddresses[chainId];
+                const to = faker.helpers.arrayElement(
+                  getMultiSendCallOnlyDeployments({
+                    version,
+                    chainId,
+                  }),
+                );
                 const taskId = faker.string.uuid();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -396,7 +615,10 @@ describe('Relay controller', () => {
                 networkService.post.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${relayUrl}/relays/v2/sponsored-call`:
-                      return Promise.resolve({ data: { taskId }, status: 200 });
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -416,65 +638,6 @@ describe('Relay controller', () => {
               });
             },
           );
-
-          it('should otherwise default to version 1.3.0', async () => {
-            const version = '1.3.0';
-            const chain = chainBuilder().with('chainId', chainId).build();
-            const safe = safeBuilder().build();
-            const safeAddress = getAddress(safe.address);
-            const transactions = [
-              execTransactionEncoder()
-                .with('data', addOwnerWithThresholdEncoder().encode())
-                .encode(),
-              execTransactionEncoder()
-                .with('data', changeThresholdEncoder().encode())
-                .encode(),
-            ].map((data) => ({
-              operation: faker.number.int({ min: 0, max: 1 }),
-              data,
-              to: safeAddress,
-              value: faker.number.bigInt(),
-            }));
-            const data = multiSendEncoder()
-              .with('transactions', multiSendTransactionsEncoder(transactions))
-              .encode();
-            const to = getMultiSendCallOnlyDeployment({
-              version,
-              network: chainId,
-            })!.networkAddresses[chainId];
-            const taskId = faker.string.uuid();
-            networkService.get.mockImplementation(({ url }) => {
-              switch (url) {
-                case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                  return Promise.resolve({ data: chain, status: 200 });
-                case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
-                  // Official mastercopy
-                  return Promise.resolve({ data: safe, status: 200 });
-                default:
-                  return Promise.reject(`No matching rule for url: ${url}`);
-              }
-            });
-            networkService.post.mockImplementation(({ url }) => {
-              switch (url) {
-                case `${relayUrl}/relays/v2/sponsored-call`:
-                  return Promise.resolve({ data: { taskId }, status: 200 });
-                default:
-                  return Promise.reject(`No matching rule for url: ${url}`);
-              }
-            });
-
-            await request(app.getHttpServer())
-              .post(`/v1/chains/${chain.chainId}/relay`)
-              .send({
-                // No version
-                to,
-                data,
-              })
-              .expect(201)
-              .expect({
-                taskId,
-              });
-          });
         });
 
         describe('MultiSend', () => {
@@ -504,18 +667,26 @@ describe('Relay controller', () => {
                     multiSendTransactionsEncoder(transactions),
                   )
                   .encode();
-                const to = getMultiSendDeployment({
-                  version,
-                  network: chainId,
-                })!.networkAddresses[chainId];
+                const to = faker.helpers.arrayElement(
+                  getMultiSendDeployments({
+                    version,
+                    chainId,
+                  }),
+                );
                 const taskId = faker.string.uuid();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -523,7 +694,10 @@ describe('Relay controller', () => {
                 networkService.post.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${relayUrl}/relays/v2/sponsored-call`:
-                      return Promise.resolve({ data: { taskId }, status: 200 });
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -543,66 +717,6 @@ describe('Relay controller', () => {
               });
             },
           );
-
-          // TODO: Remove when legacy support is removed
-          it('should otherwise default to version 1.3.0', async () => {
-            const version = '1.3.0';
-            const chain = chainBuilder().with('chainId', chainId).build();
-            const safe = safeBuilder().build();
-            const safeAddress = getAddress(safe.address);
-            const transactions = [
-              execTransactionEncoder()
-                .with('data', addOwnerWithThresholdEncoder().encode())
-                .encode(),
-              execTransactionEncoder()
-                .with('data', changeThresholdEncoder().encode())
-                .encode(),
-            ].map((data) => ({
-              operation: faker.number.int({ min: 0, max: 1 }),
-              data,
-              to: safeAddress,
-              value: faker.number.bigInt(),
-            }));
-            const data = multiSendEncoder()
-              .with('transactions', multiSendTransactionsEncoder(transactions))
-              .encode();
-            const to = getMultiSendDeployment({
-              version,
-              network: chainId,
-            })!.networkAddresses[chainId];
-            const taskId = faker.string.uuid();
-            networkService.get.mockImplementation(({ url }) => {
-              switch (url) {
-                case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                  return Promise.resolve({ data: chain, status: 200 });
-                case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
-                  // Official mastercopy
-                  return Promise.resolve({ data: safe, status: 200 });
-                default:
-                  return Promise.reject(`No matching rule for url: ${url}`);
-              }
-            });
-            networkService.post.mockImplementation(({ url }) => {
-              switch (url) {
-                case `${relayUrl}/relays/v2/sponsored-call`:
-                  return Promise.resolve({ data: { taskId }, status: 200 });
-                default:
-                  return Promise.reject(`No matching rule for url: ${url}`);
-              }
-            });
-
-            await request(app.getHttpServer())
-              .post(`/v1/chains/${chain.chainId}/relay`)
-              .send({
-                // No version
-                to,
-                data,
-              })
-              .expect(201)
-              .expect({
-                taskId,
-              });
-          });
         });
 
         describe('ProxyFactory', () => {
@@ -616,17 +730,20 @@ describe('Relay controller', () => {
                     getAddress(faker.finance.ethereumAddress()),
                     getAddress(faker.finance.ethereumAddress()),
                   ];
-                  const singleton = getSafeSingletonDeployment({
-                    version,
-                    network: chainId,
-                  })!.networkAddresses[chainId];
-                  const proxyFactory = getProxyFactoryDeployment({
-                    version,
-                    network: chainId,
-                  })!.networkAddresses[chainId];
-                  const to = getAddress(proxyFactory);
+                  const singleton = faker.helpers.arrayElement(
+                    getSafeSingletonDeployments({
+                      version,
+                      chainId,
+                    }),
+                  );
+                  const to = faker.helpers.arrayElement(
+                    getProxyFactoryDeployments({
+                      version,
+                      chainId,
+                    }),
+                  );
                   const data = createProxyWithNonceEncoder()
-                    .with('singleton', getAddress(singleton))
+                    .with('singleton', singleton)
                     .with(
                       'initializer',
                       setupEncoder().with('owners', owners).encode(),
@@ -636,7 +753,10 @@ describe('Relay controller', () => {
                   networkService.get.mockImplementation(({ url }) => {
                     switch (url) {
                       case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                        return Promise.resolve({ data: chain, status: 200 });
+                        return Promise.resolve({
+                          data: rawify(chain),
+                          status: 200,
+                        });
                       default:
                         return Promise.reject(
                           `No matching rule for url: ${url}`,
@@ -647,7 +767,7 @@ describe('Relay controller', () => {
                     switch (url) {
                       case `${relayUrl}/relays/v2/sponsored-call`:
                         return Promise.resolve({
-                          data: { taskId },
+                          data: rawify({ taskId }),
                           status: 200,
                         });
                       default:
@@ -676,14 +796,16 @@ describe('Relay controller', () => {
                     getAddress(faker.finance.ethereumAddress()),
                     getAddress(faker.finance.ethereumAddress()),
                   ];
-                  const singleton = getSafeSingletonDeployment({
-                    version,
-                    network: chainId,
-                  })!.networkAddresses[chainId];
+                  const singleton = faker.helpers.arrayElement(
+                    getSafeSingletonDeployments({
+                      version,
+                      chainId,
+                    }),
+                  );
                   // Unofficial ProxyFactory
                   const to = getAddress(faker.finance.ethereumAddress());
                   const data = createProxyWithNonceEncoder()
-                    .with('singleton', getAddress(singleton))
+                    .with('singleton', singleton)
                     .with(
                       'initializer',
                       setupEncoder().with('owners', owners).encode(),
@@ -693,7 +815,10 @@ describe('Relay controller', () => {
                   networkService.get.mockImplementation(({ url }) => {
                     switch (url) {
                       case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                        return Promise.resolve({ data: chain, status: 200 });
+                        return Promise.resolve({
+                          data: rawify(chain),
+                          status: 200,
+                        });
                       default:
                         return Promise.reject(
                           `No matching rule for url: ${url}`,
@@ -704,7 +829,7 @@ describe('Relay controller', () => {
                     switch (url) {
                       case `${relayUrl}/relays/v2/sponsored-call`:
                         return Promise.resolve({
-                          data: { taskId },
+                          data: rawify({ taskId }),
                           status: 200,
                         });
                       default:
@@ -736,17 +861,20 @@ describe('Relay controller', () => {
                     getAddress(faker.finance.ethereumAddress()),
                     getAddress(faker.finance.ethereumAddress()),
                   ];
-                  const singleton = getSafeL2SingletonDeployment({
-                    version,
-                    network: chainId,
-                  })!.networkAddresses[chainId];
-                  const proxyFactory = getProxyFactoryDeployment({
-                    version,
-                    network: chainId,
-                  })!.networkAddresses[chainId];
-                  const to = getAddress(proxyFactory);
+                  const singleton = faker.helpers.arrayElement(
+                    getSafeL2SingletonDeployments({
+                      version,
+                      chainId,
+                    }),
+                  );
+                  const to = faker.helpers.arrayElement(
+                    getProxyFactoryDeployments({
+                      version,
+                      chainId,
+                    }),
+                  );
                   const data = createProxyWithNonceEncoder()
-                    .with('singleton', getAddress(singleton))
+                    .with('singleton', singleton)
                     .with(
                       'initializer',
                       setupEncoder().with('owners', owners).encode(),
@@ -756,7 +884,10 @@ describe('Relay controller', () => {
                   networkService.get.mockImplementation(({ url }) => {
                     switch (url) {
                       case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                        return Promise.resolve({ data: chain, status: 200 });
+                        return Promise.resolve({
+                          data: rawify(chain),
+                          status: 200,
+                        });
                       default:
                         return Promise.reject(
                           `No matching rule for url: ${url}`,
@@ -767,7 +898,7 @@ describe('Relay controller', () => {
                     switch (url) {
                       case `${relayUrl}/relays/v2/sponsored-call`:
                         return Promise.resolve({
-                          data: { taskId },
+                          data: rawify({ taskId }),
                           status: 200,
                         });
                       default:
@@ -796,14 +927,16 @@ describe('Relay controller', () => {
                     getAddress(faker.finance.ethereumAddress()),
                     getAddress(faker.finance.ethereumAddress()),
                   ];
-                  const singleton = getSafeL2SingletonDeployment({
-                    version,
-                    network: chainId,
-                  })!.networkAddresses[chainId];
+                  const singleton = faker.helpers.arrayElement(
+                    getSafeL2SingletonDeployments({
+                      version,
+                      chainId,
+                    }),
+                  );
                   // Unofficial ProxyFactory
                   const to = getAddress(faker.finance.ethereumAddress());
                   const data = createProxyWithNonceEncoder()
-                    .with('singleton', getAddress(singleton))
+                    .with('singleton', singleton)
                     .with(
                       'initializer',
                       setupEncoder().with('owners', owners).encode(),
@@ -813,7 +946,10 @@ describe('Relay controller', () => {
                   networkService.get.mockImplementation(({ url }) => {
                     switch (url) {
                       case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                        return Promise.resolve({ data: chain, status: 200 });
+                        return Promise.resolve({
+                          data: rawify(chain),
+                          status: 200,
+                        });
                       default:
                         return Promise.reject(
                           `No matching rule for url: ${url}`,
@@ -824,7 +960,7 @@ describe('Relay controller', () => {
                     switch (url) {
                       case `${relayUrl}/relays/v2/sponsored-call`:
                         return Promise.resolve({
-                          data: { taskId },
+                          data: rawify({ taskId }),
                           status: 200,
                         });
                       default:
@@ -850,82 +986,543 @@ describe('Relay controller', () => {
               }
             },
           );
-
-          // TODO: Remove when legacy support is removed
-          it.each([
-            [
-              'creating an official Safe',
-              (chainId: string): string =>
-                getSafeSingletonDeployment({
-                  version: '1.3.0',
-                  network: chainId,
-                })!.networkAddresses[chainId],
-            ],
-            [
-              'creating an official L2 Safe',
-              (chainId: string): string =>
-                getSafeL2SingletonDeployment({
-                  version: '1.3.0',
-                  network: chainId,
-                })!.networkAddresses[chainId],
-            ],
-          ])(
-            'should otherwise default to version 1.3.0 singletons when %s',
-            async (_, getSingleton) => {
-              const version = '1.3.0';
-              const singleton = getSingleton(chainId);
-              const chain = chainBuilder().with('chainId', chainId).build();
-              const owners = [
-                getAddress(faker.finance.ethereumAddress()),
-                getAddress(faker.finance.ethereumAddress()),
-              ];
-              const proxyFactory = getProxyFactoryDeployment({
-                version,
-                network: chainId,
-              })!.networkAddresses[chainId];
-              const to = getAddress(proxyFactory);
-              const data = createProxyWithNonceEncoder()
-                .with('singleton', getAddress(singleton))
-                .with(
-                  'initializer',
-                  setupEncoder().with('owners', owners).encode(),
-                )
-                .encode();
-              const taskId = faker.string.uuid();
-              networkService.get.mockImplementation(({ url }) => {
-                switch (url) {
-                  case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                    return Promise.resolve({ data: chain, status: 200 });
-                  default:
-                    return Promise.reject(`No matching rule for url: ${url}`);
-                }
-              });
-              networkService.post.mockImplementation(({ url }) => {
-                switch (url) {
-                  case `${relayUrl}/relays/v2/sponsored-call`:
-                    return Promise.resolve({ data: { taskId }, status: 200 });
-                  default:
-                    return Promise.reject(`No matching rule for url: ${url}`);
-                }
-              });
-
-              await request(app.getHttpServer())
-                .post(`/v1/chains/${chain.chainId}/relay`)
-                .send({
-                  version,
-                  to,
-                  data,
-                })
-                .expect(201)
-                .expect({
-                  taskId,
-                });
-            },
-          );
         });
       });
 
       describe('Transaction validation', () => {
+        describe('Recovery', () => {
+          describe.each([
+            [
+              'execTransactionFromModule (Proposals)',
+              execTransactionFromModuleEncoder,
+            ],
+            ['executeNextTx (Execution)', executeNextTxEncoder],
+          ])('%s', (_, encoder) => {
+            describe('Singular', () => {
+              it('should return 422 when executing a non-owner management transaction', async () => {
+                const chain = chainBuilder()
+                  .with(
+                    'chainId',
+                    faker.helpers.arrayElement(supportedChainIds),
+                  )
+                  .build();
+                const safes = faker.helpers.multiple(
+                  () => getAddress(faker.finance.ethereumAddress()),
+                  { count: { min: 1, max: 4 } },
+                );
+                const version = faker.system.semver();
+                const safeAddress = faker.helpers.arrayElement(safes);
+                const data = encoder()
+                  .with('to', safeAddress)
+                  .with(
+                    'data',
+                    execTransactionEncoder()
+                      .with('data', execTransactionEncoder().encode())
+                      .encode(),
+                  )
+                  .encode();
+                const moduleAddress = getAddress(
+                  faker.finance.ethereumAddress(),
+                );
+                const taskId = faker.string.uuid();
+                networkService.get.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
+                    case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                      return Promise.resolve({
+                        data: rawify({ safes }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+                networkService.post.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${relayUrl}/relays/v2/sponsored-call`:
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+
+                await request(app.getHttpServer())
+                  .post(`/v1/chains/${chain.chainId}/relay`)
+                  .send({
+                    version,
+                    to: moduleAddress,
+                    data,
+                  })
+                  .expect(422)
+                  .expect({
+                    message:
+                      'Invalid transfer. The proposed transfer is not an execTransaction/multiSend to another party or createProxyWithNonce call.',
+                    statusCode: 422,
+                  });
+              });
+
+              it('should return 422 when the module is not enabled on the Safe', async () => {
+                const chain = chainBuilder()
+                  .with(
+                    'chainId',
+                    faker.helpers.arrayElement(supportedChainIds),
+                  )
+                  .build();
+                const safes = faker.helpers.multiple(
+                  () => getAddress(faker.finance.ethereumAddress()),
+                  { count: { min: 1, max: 4 } },
+                );
+                const version = faker.system.semver();
+                const safeAddress = getAddress(faker.finance.ethereumAddress()); // Not in safes
+                const data = encoder()
+                  .with('to', safeAddress)
+                  .with(
+                    'data',
+                    execTransactionEncoder()
+                      .with('data', addOwnerWithThresholdEncoder().encode())
+                      .encode(),
+                  )
+                  .encode();
+                const moduleAddress = getAddress(
+                  faker.finance.ethereumAddress(),
+                );
+                const taskId = faker.string.uuid();
+                networkService.get.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
+                    case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                      return Promise.resolve({
+                        data: rawify({ safes }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+                networkService.post.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${relayUrl}/relays/v2/sponsored-call`:
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+
+                await request(app.getHttpServer())
+                  .post(`/v1/chains/${chain.chainId}/relay`)
+                  .send({
+                    version,
+                    to: moduleAddress,
+                    data,
+                  })
+                  .expect(422)
+                  .expect({
+                    message:
+                      'Invalid transfer. The proposed transfer is not an execTransaction/multiSend to another party or createProxyWithNonce call.',
+                    statusCode: 422,
+                  });
+              });
+            });
+
+            describe('Batch', () => {
+              it('should return 422 when a non-owner management transaction is in a batch', async () => {
+                const chain = chainBuilder()
+                  .with(
+                    'chainId',
+                    faker.helpers.arrayElement(supportedChainIds),
+                  )
+                  .build();
+                const safes = faker.helpers.multiple(
+                  () => getAddress(faker.finance.ethereumAddress()),
+                  { count: { min: 2, max: 4 } },
+                );
+                // We don't need to test all possible combinations as we only use the address
+                // to check the officiality of the MultiSend. The rest is universal for all.
+                const multiSendVersion = faker.helpers.arrayElement(
+                  MULTI_SEND_VERSIONS[chain.chainId],
+                );
+                const [multiSendAddress] = getMultiSendDeployments({
+                  chainId: chain.chainId,
+                  version: multiSendVersion,
+                });
+                const safeAddress = faker.helpers.arrayElement(safes);
+                const data = encoder()
+                  .with('to', multiSendAddress)
+                  .with(
+                    'data',
+                    multiSendEncoder()
+                      .with(
+                        'transactions',
+                        multiSendTransactionsEncoder(
+                          [
+                            execTransactionEncoder()
+                              .with(
+                                'data',
+                                addOwnerWithThresholdEncoder().encode(),
+                              )
+                              .encode(),
+                            execTransactionEncoder()
+                              // Not an owner management transaction
+                              .with('data', execTransactionEncoder().encode())
+                              .encode(),
+                          ].map((data) => ({
+                            operation: faker.number.int({ min: 0, max: 1 }),
+                            data,
+                            to: safeAddress,
+                            value: faker.number.bigInt(),
+                          })),
+                        ),
+                      )
+                      .encode(),
+                  )
+                  .encode();
+                const moduleAddress = getAddress(
+                  faker.finance.ethereumAddress(),
+                );
+                const taskId = faker.string.uuid();
+                networkService.get.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
+                    case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                      return Promise.resolve({
+                        data: rawify({ safes }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+                networkService.post.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${relayUrl}/relays/v2/sponsored-call`:
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+
+                await request(app.getHttpServer())
+                  .post(`/v1/chains/${chain.chainId}/relay`)
+                  .send({
+                    version: multiSendVersion,
+                    to: moduleAddress,
+                    data,
+                  })
+                  .expect(422)
+                  .expect({
+                    message:
+                      'Invalid transfer. The proposed transfer is not an execTransaction/multiSend to another party or createProxyWithNonce call.',
+                    statusCode: 422,
+                  });
+              });
+
+              it('should return 422 when the module is not enabled on a Safe in a batch', async () => {
+                const chain = chainBuilder()
+                  .with(
+                    'chainId',
+                    faker.helpers.arrayElement(supportedChainIds),
+                  )
+                  .build();
+                const safes = faker.helpers.multiple(
+                  () => getAddress(faker.finance.ethereumAddress()),
+                  { count: 2 },
+                );
+                // We don't need to test all possible combinations as we only use the address
+                // to check the officiality of the MultiSend. The rest is universal for all.
+                const multiSendVersion = faker.helpers.arrayElement(
+                  MULTI_SEND_VERSIONS[chain.chainId],
+                );
+                const [multiSendAddress] = getMultiSendDeployments({
+                  chainId: chain.chainId,
+                  version: multiSendVersion,
+                });
+                const data = encoder()
+                  .with('to', multiSendAddress)
+                  .with(
+                    'data',
+                    multiSendEncoder()
+                      .with(
+                        'transactions',
+                        multiSendTransactionsEncoder(
+                          [
+                            execTransactionEncoder()
+                              .with(
+                                'data',
+                                addOwnerWithThresholdEncoder().encode(),
+                              )
+                              .encode(),
+                            execTransactionEncoder()
+                              .with('data', changeThresholdEncoder().encode())
+                              .encode(),
+                          ].map((data) => ({
+                            operation: faker.number.int({ min: 0, max: 1 }),
+                            data,
+                            // Not in safes
+                            to: getAddress(faker.finance.ethereumAddress()),
+                            value: faker.number.bigInt(),
+                          })),
+                        ),
+                      )
+                      .encode(),
+                  )
+                  .encode();
+                const moduleAddress = getAddress(
+                  faker.finance.ethereumAddress(),
+                );
+                const taskId = faker.string.uuid();
+                networkService.get.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
+                    case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                      return Promise.resolve({
+                        data: rawify({ safes }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+                networkService.post.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${relayUrl}/relays/v2/sponsored-call`:
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+
+                await request(app.getHttpServer())
+                  .post(`/v1/chains/${chain.chainId}/relay`)
+                  .send({
+                    version: multiSendVersion,
+                    to: moduleAddress,
+                    data,
+                  })
+                  .expect(422)
+                  .expect({
+                    message:
+                      'Invalid transfer. The proposed transfer is not an execTransaction/multiSend to another party or createProxyWithNonce call.',
+                    statusCode: 422,
+                  });
+              });
+
+              it('should return 422 when the module is recovering more than one Safe in a batch', async () => {
+                const chain = chainBuilder()
+                  .with(
+                    'chainId',
+                    faker.helpers.arrayElement(supportedChainIds),
+                  )
+                  .build();
+                const safes = faker.helpers.multiple(
+                  () => getAddress(faker.finance.ethereumAddress()),
+                  { count: { min: 2, max: 4 } },
+                );
+                // We don't need to test all possible combinations as we only use the address
+                // to check the officiality of the MultiSend. The rest is universal for all.
+                const multiSendVersion = faker.helpers.arrayElement(
+                  MULTI_SEND_VERSIONS[chain.chainId],
+                );
+                const [multiSendAddress] = getMultiSendDeployments({
+                  chainId: chain.chainId,
+                  version: multiSendVersion,
+                });
+                const data = encoder()
+                  .with('to', multiSendAddress)
+                  .with(
+                    'data',
+                    multiSendEncoder()
+                      .with(
+                        'transactions',
+                        multiSendTransactionsEncoder(
+                          [
+                            execTransactionEncoder()
+                              .with(
+                                'data',
+                                addOwnerWithThresholdEncoder().encode(),
+                              )
+                              .encode(),
+                            execTransactionEncoder()
+                              .with('data', changeThresholdEncoder().encode())
+                              .encode(),
+                          ].map((data, i) => ({
+                            operation: faker.number.int({ min: 0, max: 1 }),
+                            data,
+                            // More than one Safe
+                            to: safes[i],
+                            value: faker.number.bigInt(),
+                          })),
+                        ),
+                      )
+                      .encode(),
+                  )
+                  .encode();
+                const moduleAddress = getAddress(
+                  faker.finance.ethereumAddress(),
+                );
+                const taskId = faker.string.uuid();
+                networkService.get.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
+                    case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                      return Promise.resolve({
+                        data: rawify({ safes }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+                networkService.post.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${relayUrl}/relays/v2/sponsored-call`:
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+
+                await request(app.getHttpServer())
+                  .post(`/v1/chains/${chain.chainId}/relay`)
+                  .send({
+                    version: multiSendVersion,
+                    to: moduleAddress,
+                    data,
+                  })
+                  .expect(422)
+                  .expect({
+                    message:
+                      'Invalid transfer. The proposed transfer is not an execTransaction/multiSend to another party or createProxyWithNonce call.',
+                    statusCode: 422,
+                  });
+              });
+
+              it('should return 422 when not an official MultiSend', async () => {
+                const chain = chainBuilder()
+                  .with(
+                    'chainId',
+                    faker.helpers.arrayElement(supportedChainIds),
+                  )
+                  .build();
+                const version = faker.system.semver();
+                const safes = faker.helpers.multiple(
+                  () => getAddress(faker.finance.ethereumAddress()),
+                  { count: { min: 1, max: 4 } },
+                );
+                const safeAddress = faker.helpers.arrayElement(safes);
+                const data = encoder()
+                  // to is not a MultiSend
+                  .with(
+                    'data',
+                    multiSendEncoder()
+                      .with(
+                        'transactions',
+                        multiSendTransactionsEncoder(
+                          [
+                            execTransactionEncoder()
+                              .with(
+                                'data',
+                                addOwnerWithThresholdEncoder().encode(),
+                              )
+                              .encode(),
+                            execTransactionEncoder()
+                              .with('data', changeThresholdEncoder().encode())
+                              .encode(),
+                          ].map((data) => ({
+                            operation: faker.number.int({ min: 0, max: 1 }),
+                            data,
+                            to: safeAddress,
+                            value: faker.number.bigInt(),
+                          })),
+                        ),
+                      )
+                      .encode(),
+                  )
+                  .encode();
+                const moduleAddress = getAddress(
+                  faker.finance.ethereumAddress(),
+                );
+                const taskId = faker.string.uuid();
+                networkService.get.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
+                    case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                      return Promise.resolve({
+                        data: rawify({ safes }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+                networkService.post.mockImplementation(({ url }) => {
+                  switch (url) {
+                    case `${relayUrl}/relays/v2/sponsored-call`:
+                      return Promise.resolve({
+                        data: rawify({ taskId }),
+                        status: 200,
+                      });
+                    default:
+                      return Promise.reject(`No matching rule for url: ${url}`);
+                  }
+                });
+
+                await request(app.getHttpServer())
+                  .post(`/v1/chains/${chain.chainId}/relay`)
+                  .send({
+                    version,
+                    to: moduleAddress,
+                    data,
+                  })
+                  .expect(422)
+                  .expect({
+                    message:
+                      'Invalid transfer. The proposed transfer is not an execTransaction/multiSend to another party or createProxyWithNonce call.',
+                    statusCode: 422,
+                  });
+              });
+            });
+          });
+        });
+
         describe('Safe', () => {
           describe.each(SAFE_VERSIONS[chainId])(
             'v%s execTransaction',
@@ -938,14 +1535,20 @@ describe('Relay controller', () => {
                 const data = execTransactionEncoder()
                   .with('to', safeAddress)
                   .with('value', faker.number.bigInt())
-                  .encode() as Hex;
+                  .encode();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -976,14 +1579,20 @@ describe('Relay controller', () => {
                     'data',
                     erc20TransferEncoder().with('to', safeAddress).encode(),
                   )
-                  .encode() as Hex;
+                  .encode();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -1016,14 +1625,20 @@ describe('Relay controller', () => {
                       .with('recipient', safeAddress)
                       .encode(),
                   )
-                  .encode() as Hex;
+                  .encode();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -1057,14 +1672,20 @@ describe('Relay controller', () => {
                       .with('recipient', recipient)
                       .encode(),
                   )
-                  .encode() as Hex;
+                  .encode();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -1093,14 +1714,20 @@ describe('Relay controller', () => {
                 const data = execTransactionEncoder()
                   .with('to', safeAddress)
                   .with('data', erc20ApproveEncoder().encode())
-                  .encode() as Hex;
+                  .encode();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -1127,11 +1754,14 @@ describe('Relay controller', () => {
                 const safeAddress = faker.finance.ethereumAddress();
                 const data = execTransactionEncoder()
                   .with('value', faker.number.bigInt())
-                  .encode() as Hex;
+                  .encode();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Unofficial mastercopy
                       return Promise.reject(new Error('Not found'));
@@ -1180,18 +1810,26 @@ describe('Relay controller', () => {
                     multiSendTransactionsEncoder(transactions),
                   )
                   .encode();
-                const to = getMultiSendCallOnlyDeployment({
-                  version,
-                  network: chainId,
-                })!.networkAddresses[chainId];
+                const to = faker.helpers.arrayElement(
+                  getMultiSendCallOnlyDeployments({
+                    version,
+                    chainId,
+                  }),
+                );
                 const taskId = faker.string.uuid();
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safe.address}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -1200,7 +1838,7 @@ describe('Relay controller', () => {
                   switch (url) {
                     case `${relayUrl}/relays/v2/sponsored-call`:
                       return Promise.resolve({
-                        data: { taskId },
+                        data: rawify({ taskId }),
                         status: 200,
                       });
                     default:
@@ -1246,14 +1884,19 @@ describe('Relay controller', () => {
                     multiSendTransactionsEncoder(transactions),
                   )
                   .encode();
-                const to = getMultiSendCallOnlyDeployment({
-                  version,
-                  network: chainId,
-                })!.networkAddresses[chainId];
+                const to = faker.helpers.arrayElement(
+                  getMultiSendCallOnlyDeployments({
+                    version,
+                    chainId,
+                  }),
+                );
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Unofficial mastercopy
                       return Promise.reject(new Error('Not found'));
@@ -1297,14 +1940,19 @@ describe('Relay controller', () => {
                     multiSendTransactionsEncoder(transactions),
                   )
                   .encode();
-                const to = getMultiSendCallOnlyDeployment({
-                  version,
-                  network: chainId,
-                })!.networkAddresses[chainId];
+                const to = faker.helpers.arrayElement(
+                  getMultiSendCallOnlyDeployments({
+                    version,
+                    chainId,
+                  }),
+                );
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Unofficial mastercopy
                       return Promise.reject(new Error('Not found'));
@@ -1356,10 +2004,16 @@ describe('Relay controller', () => {
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                       // Official mastercopy
-                      return Promise.resolve({ data: safe, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(safe),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -1404,7 +2058,10 @@ describe('Relay controller', () => {
                 networkService.get.mockImplementation(({ url }) => {
                   switch (url) {
                     case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                      return Promise.resolve({ data: chain, status: 200 });
+                      return Promise.resolve({
+                        data: rawify(chain),
+                        status: 200,
+                      });
                     default:
                       return Promise.reject(`No matching rule for url: ${url}`);
                   }
@@ -1436,7 +2093,7 @@ describe('Relay controller', () => {
           const safeAddress = getAddress(safe.address);
           const data = execTransactionEncoder()
             .with('value', faker.number.bigInt())
-            .encode() as Hex;
+            .encode();
           const gasLimit = 'invalid';
 
           await request(app.getHttpServer())
@@ -1452,7 +2109,7 @@ describe('Relay controller', () => {
               statusCode: 422,
               code: 'custom',
               path: ['gasLimit'],
-              message: 'Invalid input',
+              message: 'Unable to parse value',
             });
         });
 
@@ -1466,10 +2123,10 @@ describe('Relay controller', () => {
           networkService.get.mockImplementation(({ url }) => {
             switch (url) {
               case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                return Promise.resolve({ data: chain, status: 200 });
+                return Promise.resolve({ data: rawify(chain), status: 200 });
               case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                 // Official mastercopy
-                return Promise.resolve({ data: safe, status: 200 });
+                return Promise.resolve({ data: rawify(safe), status: 200 });
               default:
                 return Promise.reject(`No matching rule for url: ${url}`);
             }
@@ -1492,6 +2149,184 @@ describe('Relay controller', () => {
       });
 
       describe('Rate limiting', () => {
+        describe('Recovery', () => {
+          describe.each([
+            [
+              'execTransactionFromModule (Proposals)',
+              execTransactionFromModuleEncoder,
+            ],
+            ['executeNextTx (Execution)', executeNextTxEncoder],
+          ])('%s', (_, encoder) => {
+            it('should increment the rate limit counter with singular recovery calls', async () => {
+              const chain = chainBuilder()
+                .with('chainId', faker.helpers.arrayElement(supportedChainIds))
+                .build();
+              const safes = faker.helpers.multiple(
+                () => getAddress(faker.finance.ethereumAddress()),
+                { count: { min: 1, max: 4 } },
+              );
+              const version = faker.system.semver();
+              const safeAddress = faker.helpers.arrayElement(safes);
+              const data = encoder()
+                .with('to', safeAddress)
+                .with(
+                  'data',
+                  execTransactionEncoder()
+                    .with('data', addOwnerWithThresholdEncoder().encode())
+                    .encode(),
+                )
+                .encode();
+              const moduleAddress = getAddress(faker.finance.ethereumAddress());
+              const taskId = faker.string.uuid();
+              networkService.get.mockImplementation(({ url }) => {
+                switch (url) {
+                  case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                    return Promise.resolve({
+                      data: rawify(chain),
+                      status: 200,
+                    });
+                  case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                    return Promise.resolve({
+                      data: rawify({ safes }),
+                      status: 200,
+                    });
+                  default:
+                    return Promise.reject(`No matching rule for url: ${url}`);
+                }
+              });
+              networkService.post.mockImplementation(({ url }) => {
+                switch (url) {
+                  case `${relayUrl}/relays/v2/sponsored-call`:
+                    return Promise.resolve({
+                      data: rawify({ taskId }),
+                      status: 200,
+                    });
+                  default:
+                    return Promise.reject(`No matching rule for url: ${url}`);
+                }
+              });
+
+              await request(app.getHttpServer())
+                .post(`/v1/chains/${chain.chainId}/relay`)
+                .send({
+                  version,
+                  to: moduleAddress,
+                  data,
+                })
+                .expect(201)
+                .expect({
+                  taskId,
+                });
+
+              await request(app.getHttpServer())
+                .get(`/v1/chains/${chain.chainId}/relay/${safeAddress}`)
+                .expect(({ body }) => {
+                  expect(body).toMatchObject({
+                    remaining: 4,
+                  });
+                });
+            });
+
+            it('should increment the rate limit counter with batch recovery calls', async () => {
+              const chain = chainBuilder()
+                .with('chainId', faker.helpers.arrayElement(supportedChainIds))
+                .build();
+              const safes = faker.helpers.multiple(
+                () => getAddress(faker.finance.ethereumAddress()),
+                { count: { min: 2, max: 4 } },
+              );
+              // We don't need to test all possible combinations as we only use the address
+              // to check the officiality of the MultiSend. The rest is universal for all.
+              const multiSendVersion = faker.helpers.arrayElement(
+                MULTI_SEND_VERSIONS[chain.chainId],
+              );
+              const [multiSendAddress] = getMultiSendDeployments({
+                chainId: chain.chainId,
+                version: multiSendVersion,
+              });
+              const safeAddress = faker.helpers.arrayElement(safes);
+              const data = encoder()
+                .with('to', multiSendAddress)
+                .with(
+                  'data',
+                  multiSendEncoder()
+                    .with(
+                      'transactions',
+                      multiSendTransactionsEncoder(
+                        [
+                          execTransactionEncoder()
+                            .with(
+                              'data',
+                              addOwnerWithThresholdEncoder().encode(),
+                            )
+                            .encode(),
+                          execTransactionEncoder()
+                            .with('data', changeThresholdEncoder().encode())
+                            .encode(),
+                        ].map((data) => ({
+                          operation: faker.number.int({ min: 0, max: 1 }),
+                          data,
+                          to: safeAddress,
+                          value: faker.number.bigInt(),
+                        })),
+                      ),
+                    )
+                    .encode(),
+                )
+                .encode();
+              const moduleAddress = getAddress(faker.finance.ethereumAddress());
+              const taskId = faker.string.uuid();
+              networkService.get.mockImplementation(({ url }) => {
+                switch (url) {
+                  case `${safeConfigUrl}/api/v1/chains/${chain.chainId}`:
+                    return Promise.resolve({
+                      data: rawify(chain),
+                      status: 200,
+                    });
+                  case `${chain.transactionService}/api/v1/modules/${moduleAddress}/safes/`:
+                    return Promise.resolve({
+                      data: rawify({ safes }),
+                      status: 200,
+                    });
+                  default:
+                    return Promise.reject(`No matching rule for url: ${url}`);
+                }
+              });
+              networkService.post.mockImplementation(({ url }) => {
+                switch (url) {
+                  case `${relayUrl}/relays/v2/sponsored-call`:
+                    return Promise.resolve({
+                      data: rawify({ taskId }),
+                      status: 200,
+                    });
+                  default:
+                    return Promise.reject(`No matching rule for url: ${url}`);
+                }
+              });
+
+              await request(app.getHttpServer())
+                .post(`/v1/chains/${chain.chainId}/relay`)
+                .send({
+                  version: multiSendVersion,
+                  to: moduleAddress,
+                  data,
+                })
+                .expect(201)
+                .expect({
+                  taskId,
+                });
+
+              await request(app.getHttpServer())
+                .get(`/v1/chains/${chain.chainId}/relay/${safeAddress}`)
+                .expect(({ body }) => {
+                  expect(body).toMatchObject({
+                    remaining: 4,
+                  });
+                });
+            });
+          });
+        });
+
         describe('Safe', () => {
           it.each(SAFE_VERSIONS[chainId])(
             'should increment the rate limit counter of v%s execTransaction calls',
@@ -1501,15 +2336,18 @@ describe('Relay controller', () => {
               const safeAddress = getAddress(safe.address);
               const data = execTransactionEncoder()
                 .with('value', faker.number.bigInt())
-                .encode() as Hex;
+                .encode();
               const taskId = faker.string.uuid();
               networkService.get.mockImplementation(({ url }) => {
                 switch (url) {
                   case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                    return Promise.resolve({ data: chain, status: 200 });
+                    return Promise.resolve({
+                      data: rawify(chain),
+                      status: 200,
+                    });
                   case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                     // Official mastercopy
-                    return Promise.resolve({ data: safe, status: 200 });
+                    return Promise.resolve({ data: rawify(safe), status: 200 });
                   default:
                     return Promise.reject(`No matching rule for url: ${url}`);
                 }
@@ -1517,7 +2355,10 @@ describe('Relay controller', () => {
               networkService.post.mockImplementation(({ url }) => {
                 switch (url) {
                   case `${relayUrl}/relays/v2/sponsored-call`:
-                    return Promise.resolve({ data: { taskId }, status: 200 });
+                    return Promise.resolve({
+                      data: rawify({ taskId }),
+                      status: 200,
+                    });
                   default:
                     return Promise.reject(`No matching rule for url: ${url}`);
                 }
@@ -1568,18 +2409,23 @@ describe('Relay controller', () => {
                   multiSendTransactionsEncoder(transactions),
                 )
                 .encode();
-              const to = getMultiSendCallOnlyDeployment({
-                version,
-                network: chainId,
-              })!.networkAddresses[chainId];
+              const to = faker.helpers.arrayElement(
+                getMultiSendCallOnlyDeployments({
+                  version,
+                  chainId,
+                }),
+              );
               const taskId = faker.string.uuid();
               networkService.get.mockImplementation(({ url }) => {
                 switch (url) {
                   case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                    return Promise.resolve({ data: chain, status: 200 });
+                    return Promise.resolve({
+                      data: rawify(chain),
+                      status: 200,
+                    });
                   case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                     // Official mastercopy
-                    return Promise.resolve({ data: safe, status: 200 });
+                    return Promise.resolve({ data: rawify(safe), status: 200 });
                   default:
                     return Promise.reject(`No matching rule for url: ${url}`);
                 }
@@ -1587,7 +2433,10 @@ describe('Relay controller', () => {
               networkService.post.mockImplementation(({ url }) => {
                 switch (url) {
                   case `${relayUrl}/relays/v2/sponsored-call`:
-                    return Promise.resolve({ data: { taskId }, status: 200 });
+                    return Promise.resolve({
+                      data: rawify({ taskId }),
+                      status: 200,
+                    });
                   default:
                     return Promise.reject(`No matching rule for url: ${url}`);
                 }
@@ -1622,15 +2471,18 @@ describe('Relay controller', () => {
                 getAddress(faker.finance.ethereumAddress()),
                 getAddress(faker.finance.ethereumAddress()),
               ];
-              const singleton = getSafeSingletonDeployment({
-                version,
-                network: chainId,
-              })!.networkAddresses[chainId];
-              const proxyFactory = getProxyFactoryDeployment({
-                version,
-                network: chainId,
-              })!.networkAddresses[chainId];
-              const to = getAddress(proxyFactory);
+              const singleton = faker.helpers.arrayElement(
+                getSafeSingletonDeployments({
+                  version,
+                  chainId,
+                }),
+              );
+              const to = faker.helpers.arrayElement(
+                getProxyFactoryDeployments({
+                  version,
+                  chainId,
+                }),
+              );
               const data = createProxyWithNonceEncoder()
                 .with('singleton', getAddress(singleton))
                 .with(
@@ -1642,7 +2494,10 @@ describe('Relay controller', () => {
               networkService.get.mockImplementation(({ url }) => {
                 switch (url) {
                   case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                    return Promise.resolve({ data: chain, status: 200 });
+                    return Promise.resolve({
+                      data: rawify(chain),
+                      status: 200,
+                    });
                   default:
                     return Promise.reject(`No matching rule for url: ${url}`);
                 }
@@ -1650,7 +2505,10 @@ describe('Relay controller', () => {
               networkService.post.mockImplementation(({ url }) => {
                 switch (url) {
                   case `${relayUrl}/relays/v2/sponsored-call`:
-                    return Promise.resolve({ data: { taskId }, status: 200 });
+                    return Promise.resolve({
+                      data: rawify({ taskId }),
+                      status: 200,
+                    });
                   default:
                     return Promise.reject(`No matching rule for url: ${url}`);
                 }
@@ -1678,22 +2536,24 @@ describe('Relay controller', () => {
         });
 
         it('should handle both checksummed and non-checksummed addresses', async () => {
+          // Version supported by all contracts
+          const version = '1.3.0';
           const chain = chainBuilder().with('chainId', chainId).build();
           const safe = safeBuilder().build();
           const nonChecksummedAddress = safe.address.toLowerCase();
           const checksummedSafeAddress = getAddress(safe.address);
           const data = execTransactionEncoder()
             .with('value', faker.number.bigInt())
-            .encode() as Hex;
+            .encode();
           const taskId = faker.string.uuid();
           networkService.get.mockImplementation(({ url }) => {
             switch (url) {
               case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                return Promise.resolve({ data: chain, status: 200 });
+                return Promise.resolve({ data: rawify(chain), status: 200 });
               case `${chain.transactionService}/api/v1/safes/${nonChecksummedAddress}`:
               case `${chain.transactionService}/api/v1/safes/${checksummedSafeAddress}`:
                 // Official mastercopy
-                return Promise.resolve({ data: safe, status: 200 });
+                return Promise.resolve({ data: rawify(safe), status: 200 });
               default:
                 return Promise.reject(`No matching rule for url: ${url}`);
             }
@@ -1701,7 +2561,10 @@ describe('Relay controller', () => {
           networkService.post.mockImplementation(({ url }) => {
             switch (url) {
               case `${relayUrl}/relays/v2/sponsored-call`:
-                return Promise.resolve({ data: { taskId }, status: 200 });
+                return Promise.resolve({
+                  data: rawify({ taskId }),
+                  status: 200,
+                });
               default:
                 return Promise.reject(`No matching rule for url: ${url}`);
             }
@@ -1716,6 +2579,7 @@ describe('Relay controller', () => {
               .send({
                 to: address,
                 data,
+                version,
               });
           }
 
@@ -1742,15 +2606,15 @@ describe('Relay controller', () => {
           const safeAddress = getAddress(safe.address);
           const data = execTransactionEncoder()
             .with('value', faker.number.bigInt())
-            .encode() as Hex;
+            .encode();
           const taskId = faker.string.uuid();
           networkService.get.mockImplementation(({ url }) => {
             switch (url) {
               case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                return Promise.resolve({ data: chain, status: 200 });
+                return Promise.resolve({ data: rawify(chain), status: 200 });
               case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                 // Official mastercopy
-                return Promise.resolve({ data: safe, status: 200 });
+                return Promise.resolve({ data: rawify(safe), status: 200 });
               default:
                 return Promise.reject(`No matching rule for url: ${url}`);
             }
@@ -1758,7 +2622,10 @@ describe('Relay controller', () => {
           networkService.post.mockImplementation(({ url }) => {
             switch (url) {
               case `${relayUrl}/relays/v2/sponsored-call`:
-                return Promise.resolve({ data: { taskId }, status: 200 });
+                return Promise.resolve({
+                  data: rawify({ taskId }),
+                  status: 200,
+                });
               default:
                 return Promise.reject(`No matching rule for url: ${url}`);
             }
@@ -1781,20 +2648,22 @@ describe('Relay controller', () => {
         });
 
         it('should return 429 if the rate limit is reached', async () => {
+          // Version supported by all contracts
+          const version = '1.3.0';
           const chain = chainBuilder().with('chainId', chainId).build();
           const safe = safeBuilder().build();
           const safeAddress = getAddress(safe.address);
           const data = execTransactionEncoder()
             .with('value', faker.number.bigInt())
-            .encode() as Hex;
+            .encode();
           const taskId = faker.string.uuid();
           networkService.get.mockImplementation(({ url }) => {
             switch (url) {
               case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-                return Promise.resolve({ data: chain, status: 200 });
+                return Promise.resolve({ data: rawify(chain), status: 200 });
               case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
                 // Official mastercopy
-                return Promise.resolve({ data: safe, status: 200 });
+                return Promise.resolve({ data: rawify(safe), status: 200 });
               default:
                 return Promise.reject(`No matching rule for url: ${url}`);
             }
@@ -1802,7 +2671,10 @@ describe('Relay controller', () => {
           networkService.post.mockImplementation(({ url }) => {
             switch (url) {
               case `${relayUrl}/relays/v2/sponsored-call`:
-                return Promise.resolve({ data: { taskId }, status: 200 });
+                return Promise.resolve({
+                  data: rawify({ taskId }),
+                  status: 200,
+                });
               default:
                 return Promise.reject(`No matching rule for url: ${url}`);
             }
@@ -1815,6 +2687,7 @@ describe('Relay controller', () => {
               .send({
                 to: safeAddress,
                 data,
+                version,
               });
           }
 
@@ -1823,6 +2696,7 @@ describe('Relay controller', () => {
             .send({
               to: safeAddress,
               data,
+              version,
             })
             .expect(429)
             .expect({
@@ -1833,16 +2707,18 @@ describe('Relay controller', () => {
       });
 
       it('should return 503 if the relayer throws', async () => {
+        // Version supported by all contracts
+        const version = '1.3.0';
         const chain = chainBuilder().with('chainId', chainId).build();
         const safe = safeBuilder().build();
-        const data = execTransactionEncoder().encode() as Hex;
+        const data = execTransactionEncoder().encode();
         networkService.get.mockImplementation(({ url }) => {
           switch (url) {
             case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-              return Promise.resolve({ data: chain, status: 200 });
+              return Promise.resolve({ data: rawify(chain), status: 200 });
             case `${chain.transactionService}/api/v1/safes/${safe.address}`:
               // Official mastercopy
-              return Promise.resolve({ data: safe, status: 200 });
+              return Promise.resolve({ data: rawify(safe), status: 200 });
             default:
               return Promise.reject(`No matching rule for url: ${url}`);
           }
@@ -1861,6 +2737,7 @@ describe('Relay controller', () => {
           .send({
             to: safe.address,
             data,
+            version,
           })
           .expect(503);
       });
@@ -1876,20 +2753,22 @@ describe('Relay controller', () => {
       });
 
       it('should not return negative limits if more requests were made than the limit', async () => {
+        // Version supported by all contracts
+        const version = '1.3.0';
         const chain = chainBuilder().with('chainId', chainId).build();
         const safe = safeBuilder().build();
         const safeAddress = getAddress(safe.address);
         const data = execTransactionEncoder()
           .with('value', faker.number.bigInt())
-          .encode() as Hex;
+          .encode();
         const taskId = faker.string.uuid();
         networkService.get.mockImplementation(({ url }) => {
           switch (url) {
             case `${safeConfigUrl}/api/v1/chains/${chainId}`:
-              return Promise.resolve({ data: chain, status: 200 });
+              return Promise.resolve({ data: rawify(chain), status: 200 });
             case `${chain.transactionService}/api/v1/safes/${safeAddress}`:
               // Official mastercopy
-              return Promise.resolve({ data: safe, status: 200 });
+              return Promise.resolve({ data: rawify(safe), status: 200 });
             default:
               return Promise.reject(`No matching rule for url: ${url}`);
           }
@@ -1897,7 +2776,7 @@ describe('Relay controller', () => {
         networkService.post.mockImplementation(({ url }) => {
           switch (url) {
             case `${relayUrl}/relays/v2/sponsored-call`:
-              return Promise.resolve({ data: { taskId }, status: 200 });
+              return Promise.resolve({ data: rawify({ taskId }), status: 200 });
             default:
               return Promise.reject(`No matching rule for url: ${url}`);
           }
@@ -1910,6 +2789,7 @@ describe('Relay controller', () => {
             .send({
               to: safeAddress,
               data,
+              version,
             });
         }
 

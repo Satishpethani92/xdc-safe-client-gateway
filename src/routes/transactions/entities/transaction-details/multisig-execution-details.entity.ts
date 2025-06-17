@@ -1,6 +1,15 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  ApiExtraModels,
+  ApiProperty,
+  ApiPropertyOptional,
+  getSchemaPath,
+} from '@nestjs/swagger';
 import { AddressInfo } from '@/routes/common/entities/address-info.entity';
-import { Token } from '@/routes/balances/entities/token.entity';
+import {
+  Erc20Token,
+  Erc721Token,
+  NativeToken,
+} from '@/routes/balances/entities/token.entity';
 import {
   ExecutionDetails,
   ExecutionDetailsType,
@@ -9,7 +18,7 @@ import {
 export class MultisigConfirmationDetails {
   @ApiProperty()
   signer: AddressInfo;
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   signature: string | null;
   @ApiProperty()
   submittedAt: number;
@@ -25,7 +34,10 @@ export class MultisigConfirmationDetails {
   }
 }
 
+@ApiExtraModels(NativeToken, Erc20Token, Erc721Token)
 export class MultisigExecutionDetails extends ExecutionDetails {
+  @ApiProperty({ enum: [ExecutionDetailsType.Multisig] })
+  override type = ExecutionDetailsType.Multisig;
   @ApiProperty()
   submittedAt: number;
   @ApiProperty()
@@ -44,20 +56,29 @@ export class MultisigExecutionDetails extends ExecutionDetails {
   safeTxHash: string;
   @ApiPropertyOptional({ type: AddressInfo, nullable: true })
   executor: AddressInfo | null;
-  @ApiProperty()
-  signers: AddressInfo[];
+  @ApiProperty({ type: AddressInfo, isArray: true })
+  signers: Array<AddressInfo>;
   @ApiProperty()
   confirmationsRequired: number;
-  @ApiProperty()
-  confirmations: MultisigConfirmationDetails[];
+  @ApiProperty({ type: MultisigConfirmationDetails, isArray: true })
+  confirmations: Array<MultisigConfirmationDetails>;
   @ApiProperty({ type: AddressInfo, isArray: true })
-  rejectors: AddressInfo[];
-  @ApiPropertyOptional({ type: Token, nullable: true })
-  gasTokenInfo: Token | null;
+  rejectors: Array<AddressInfo>;
+  @ApiPropertyOptional({
+    oneOf: [
+      { $ref: getSchemaPath(NativeToken) },
+      { $ref: getSchemaPath(Erc20Token) },
+      { $ref: getSchemaPath(Erc721Token) },
+    ],
+    nullable: true,
+  })
+  gasTokenInfo: NativeToken | Erc20Token | Erc721Token | null;
   @ApiProperty()
   trusted: boolean;
   @ApiPropertyOptional({ type: AddressInfo, nullable: true })
   proposer!: AddressInfo | null;
+  @ApiPropertyOptional({ type: AddressInfo, nullable: true })
+  proposedByDelegate!: AddressInfo | null;
 
   constructor(
     submittedAt: number,
@@ -69,13 +90,14 @@ export class MultisigExecutionDetails extends ExecutionDetails {
     refundReceiver: AddressInfo,
     safeTxHash: string,
     executor: AddressInfo | null,
-    signers: AddressInfo[],
+    signers: Array<AddressInfo>,
     confirmationsRequired: number,
-    confirmations: MultisigConfirmationDetails[],
-    rejectors: AddressInfo[],
-    gasTokenInfo: Token | null,
+    confirmations: Array<MultisigConfirmationDetails>,
+    rejectors: Array<AddressInfo>,
+    gasTokenInfo: NativeToken | Erc20Token | Erc721Token | null,
     trusted: boolean,
     proposer: AddressInfo | null,
+    proposedByDelegate: AddressInfo | null,
   ) {
     super(ExecutionDetailsType.Multisig);
     this.submittedAt = submittedAt;
@@ -94,5 +116,6 @@ export class MultisigExecutionDetails extends ExecutionDetails {
     this.gasTokenInfo = gasTokenInfo;
     this.trusted = trusted;
     this.proposer = proposer;
+    this.proposedByDelegate = proposedByDelegate;
   }
 }

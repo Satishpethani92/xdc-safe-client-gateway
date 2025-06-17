@@ -2,11 +2,12 @@ import { faker } from '@faker-js/faker';
 import { FakeConfigurationService } from '@/config/__tests__/fake.configuration.service';
 import { TenderlyApi } from '@/datasources/alerts-api/tenderly-api.service';
 import { HttpErrorFactory } from '@/datasources/errors/http-error-factory';
-import { INetworkService } from '@/datasources/network/network.service.interface';
-import { AlertsRegistration } from '@/domain/alerts/entities/alerts-registration.entity';
+import type { INetworkService } from '@/datasources/network/network.service.interface';
+import type { AlertsRegistration } from '@/domain/alerts/entities/alerts-registration.entity';
 import { DataSourceError } from '@/domain/errors/data-source.error';
 import { NetworkResponseError } from '@/datasources/network/entities/network.error.entity';
-import { AlertsDeletion } from '@/domain/alerts/entities/alerts-deletion.entity';
+import type { AlertsDeletion } from '@/domain/alerts/entities/alerts-deletion.entity';
+import { getAddress } from 'viem';
 
 const networkService = {
   post: jest.fn(),
@@ -24,7 +25,7 @@ describe('TenderlyApi', () => {
   let tenderlyAccount: string;
   let tenderlyProject: string;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     jest.resetAllMocks();
 
     tenderlyBaseUri = faker.internet.url({ appendSlash: false });
@@ -33,10 +34,10 @@ describe('TenderlyApi', () => {
     tenderlyProject = faker.string.sample();
 
     fakeConfigurationService = new FakeConfigurationService();
-    fakeConfigurationService.set('alerts.baseUri', tenderlyBaseUri);
-    fakeConfigurationService.set('alerts.apiKey', tenderlyApiKey);
-    fakeConfigurationService.set('alerts.account', tenderlyAccount);
-    fakeConfigurationService.set('alerts.project', tenderlyProject);
+    fakeConfigurationService.set('alerts-api.baseUri', tenderlyBaseUri);
+    fakeConfigurationService.set('alerts-api.apiKey', tenderlyApiKey);
+    fakeConfigurationService.set('alerts-api.account', tenderlyAccount);
+    fakeConfigurationService.set('alerts-api.project', tenderlyProject);
 
     httpErrorFactory = new HttpErrorFactory();
 
@@ -47,7 +48,7 @@ describe('TenderlyApi', () => {
     );
   });
 
-  it('should error if configuration is not defined', async () => {
+  it('should error if configuration is not defined', () => {
     const fakeConfigurationService = new FakeConfigurationService();
     const httpErrorFactory = new HttpErrorFactory();
 
@@ -71,7 +72,7 @@ describe('TenderlyApi', () => {
       };
 
       const contract: AlertsRegistration = {
-        address: faker.finance.ethereumAddress(),
+        address: getAddress(faker.finance.ethereumAddress()),
         displayName: fakeDisplayName(),
         chainId: faker.string.numeric(),
       };
@@ -108,7 +109,7 @@ describe('TenderlyApi', () => {
 
       await expect(
         service.addContract({
-          address: faker.finance.ethereumAddress(),
+          address: getAddress(faker.finance.ethereumAddress()),
           chainId: faker.string.numeric(),
         }),
       ).rejects.toThrow(new DataSourceError('Unexpected error', status));
@@ -120,7 +121,7 @@ describe('TenderlyApi', () => {
   describe('deleteContract', () => {
     it('should delete a contract', async () => {
       const contract: AlertsDeletion = {
-        address: faker.finance.ethereumAddress(),
+        address: getAddress(faker.finance.ethereumAddress()),
         chainId: faker.string.numeric(),
       };
 
@@ -151,7 +152,7 @@ describe('TenderlyApi', () => {
 
       await expect(
         service.deleteContract({
-          address: faker.finance.ethereumAddress(),
+          address: getAddress(faker.finance.ethereumAddress()),
           chainId: faker.string.numeric(),
         }),
       ).rejects.toThrow(new DataSourceError('Unexpected error', status));

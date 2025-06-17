@@ -11,6 +11,7 @@ import {
   PaginationData,
   cursorUrlFromLimitAndOffset,
 } from '@/routes/common/pagination/pagination.data';
+import { IndexingStatus } from '@/routes/chains/entities/indexing-status.entity';
 
 @Injectable()
 export class ChainsService {
@@ -35,29 +36,9 @@ export class ChainsService {
     const nextURL = cursorUrlFromLimitAndOffset(routeUrl, result.next);
     const previousURL = cursorUrlFromLimitAndOffset(routeUrl, result.previous);
 
-    const chains = result.results.map(
-      (chain) =>
-        new Chain(
-          chain.chainId,
-          chain.chainName,
-          chain.description,
-          chain.l2,
-          chain.nativeCurrency,
-          chain.transactionService,
-          chain.blockExplorerUriTemplate,
-          chain.disabledWallets,
-          chain.features,
-          chain.gasPrice,
-          chain.publicRpcUri,
-          chain.rpcUri,
-          chain.safeAppsRpcUri,
-          chain.shortName,
-          chain.theme,
-          chain.ensRegistryAddress,
-          chain.isTestnet,
-          chain.chainLogoUri,
-        ),
-    );
+    const chains = result.results.map((chain) => {
+      return new Chain(chain);
+    });
 
     return {
       count: result.count,
@@ -69,26 +50,7 @@ export class ChainsService {
 
   async getChain(chainId: string): Promise<Chain> {
     const result = await this.chainsRepository.getChain(chainId);
-    return new Chain(
-      result.chainId,
-      result.chainName,
-      result.description,
-      result.l2,
-      result.nativeCurrency,
-      result.transactionService,
-      result.blockExplorerUriTemplate,
-      result.disabledWallets,
-      result.features,
-      result.gasPrice,
-      result.publicRpcUri,
-      result.rpcUri,
-      result.safeAppsRpcUri,
-      result.shortName,
-      result.theme,
-      result.ensRegistryAddress,
-      result.isTestnet,
-      result.chainLogoUri,
-    );
+    return new Chain(result);
   }
 
   async getAboutChain(chainId: string): Promise<AboutChain> {
@@ -106,12 +68,27 @@ export class ChainsService {
     return this.backboneRepository.getBackbone(chainId);
   }
 
-  async getMasterCopies(chainId: string): Promise<MasterCopy[]> {
+  async getMasterCopies(chainId: string): Promise<Array<MasterCopy>> {
     const result = await this.chainsRepository.getSingletons(chainId);
 
     return result.map((singleton) => ({
       address: singleton.address,
       version: singleton.version,
     }));
+  }
+
+  async getIndexingStatus(chainId: string): Promise<IndexingStatus> {
+    const indexingStatus =
+      await this.chainsRepository.getIndexingStatus(chainId);
+
+    const lastSync = Math.min(
+      indexingStatus.erc20BlockTimestamp.getTime(),
+      indexingStatus.masterCopiesBlockTimestamp.getTime(),
+    );
+
+    return new IndexingStatus({
+      lastSync,
+      synced: indexingStatus.synced,
+    });
   }
 }

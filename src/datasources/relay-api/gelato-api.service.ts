@@ -6,6 +6,13 @@ import {
 import { IRelayApi } from '@/domain/interfaces/relay-api.interface';
 import { IConfigurationService } from '@/config/configuration.service.interface';
 import { HttpErrorFactory } from '@/datasources/errors/http-error-factory';
+import { CacheRouter } from '@/datasources/cache/cache.router';
+import {
+  CacheService,
+  ICacheService,
+} from '@/datasources/cache/cache.service.interface';
+import type { Relay } from '@/domain/relay/entities/relay.entity';
+import type { Raw } from '@/validation/entities/raw.entity';
 
 @Injectable()
 export class GelatoApi implements IRelayApi {
@@ -18,6 +25,7 @@ export class GelatoApi implements IRelayApi {
   private static GAS_LIMIT_BUFFER = BigInt(150_000);
 
   private readonly baseUri: string;
+  private readonly ttlSeconds: number;
 
   constructor(
     @Inject(NetworkService)
@@ -25,24 +33,26 @@ export class GelatoApi implements IRelayApi {
     @Inject(IConfigurationService)
     private readonly configurationService: IConfigurationService,
     private readonly httpErrorFactory: HttpErrorFactory,
+    @Inject(CacheService) private readonly cacheService: ICacheService,
   ) {
     this.baseUri =
       this.configurationService.getOrThrow<string>('relay.baseUri');
+    this.ttlSeconds = configurationService.getOrThrow('relay.ttlSeconds');
   }
 
   async relay(args: {
     chainId: string;
-    to: string;
+    to: `0x${string}`;
     data: string;
     gasLimit: bigint | null;
-  }): Promise<{ taskId: string }> {
+  }): Promise<Raw<Relay>> {
     const sponsorApiKey = this.configurationService.getOrThrow<string>(
       `relay.apiKey.${args.chainId}`,
     );
 
     try {
       const url = `${this.baseUri}/relays/v2/sponsored-call`;
-      const { data } = await this.networkService.post<{ taskId: string }>({
+      const { data } = await this.networkService.post<Relay>({
         url,
         data: {
           sponsorApiKey,
@@ -62,5 +72,28 @@ export class GelatoApi implements IRelayApi {
 
   private getRelayGasLimit(gasLimit: bigint): bigint {
     return gasLimit + GelatoApi.GAS_LIMIT_BUFFER;
+  }
+
+  async getRelayCount(args: {
+    chainId: string;
+    address: `0x${string}`;
+    // TODO: Change to Raw when cache service is migrated
+  }): Promise<number> {
+    const cacheDir = CacheRouter.getRelayCacheDir(args);
+    const count = await this.cacheService.hGet(cacheDir);
+    return count ? parseInt(count) : 0;
+  }
+
+  async setRelayCount(args: {
+    chainId: string;
+    address: `0x${string}`;
+    count: number;
+  }): Promise<void> {
+    const cacheDir = CacheRouter.getRelayCacheDir(args);
+    await this.cacheService.hSet(
+      cacheDir,
+      args.count.toString(),
+      this.ttlSeconds,
+    );
   }
 }

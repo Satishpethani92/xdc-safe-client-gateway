@@ -12,14 +12,22 @@ export class OwnersService {
 
   async getSafesByOwner(args: {
     chainId: string;
-    ownerAddress: string;
+    ownerAddress: `0x${string}`;
   }): Promise<SafeList> {
     return this.safeRepository.getSafesByOwner(args);
   }
 
-  async getAllSafesByOwner(args: {
-    ownerAddress: string;
+  // TODO: Remove with /owners/:ownerAddress/safes
+  // @deprecated
+  async deprecated__getAllSafesByOwner(args: {
+    ownerAddress: `0x${string}`;
   }): Promise<{ [chainId: string]: Array<string> }> {
+    return this.safeRepository.deprecated__getAllSafesByOwner(args);
+  }
+
+  async getAllSafesByOwner(args: {
+    ownerAddress: `0x${string}`;
+  }): Promise<{ [chainId: string]: Array<string> | null }> {
     return this.safeRepository.getAllSafesByOwner(args);
   }
 }

@@ -1,5 +1,5 @@
-import { NetworkRequest } from '@/datasources/network/entities/network.request.entity';
-import { NetworkResponse } from '@/datasources/network/entities/network.response.entity';
+import type { NetworkRequest } from '@/datasources/network/entities/network.request.entity';
+import type { NetworkResponse } from '@/datasources/network/entities/network.response.entity';
 
 export const NetworkService = Symbol('INetworkService');
 
@@ -11,7 +11,7 @@ export interface INetworkService {
 
   post<T>(args: {
     url: string;
-    data: object;
+    data?: object;
     networkRequest?: NetworkRequest;
   }): Promise<NetworkResponse<T>>;
 

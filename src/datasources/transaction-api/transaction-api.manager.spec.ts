@@ -1,11 +1,13 @@
-import { IConfigurationService } from '@/config/configuration.service.interface';
-import { CacheFirstDataSource } from '@/datasources/cache/cache.first.data.source';
-import { ICacheService } from '@/datasources/cache/cache.service.interface';
-import { HttpErrorFactory } from '@/datasources/errors/http-error-factory';
-import { INetworkService } from '@/datasources/network/network.service.interface';
+import type { IConfigurationService } from '@/config/configuration.service.interface';
+import type { CacheFirstDataSource } from '@/datasources/cache/cache.first.data.source';
+import type { ICacheService } from '@/datasources/cache/cache.service.interface';
+import type { HttpErrorFactory } from '@/datasources/errors/http-error-factory';
+import type { INetworkService } from '@/datasources/network/network.service.interface';
 import { TransactionApiManager } from '@/datasources/transaction-api/transaction-api.manager';
 import { chainBuilder } from '@/domain/chains/entities/__tests__/chain.builder';
-import { IConfigApi } from '@/domain/interfaces/config-api.interface';
+import type { IConfigApi } from '@/domain/interfaces/config-api.interface';
+import type { ILoggingService } from '@/logging/logging.interface';
+import { rawify } from '@/validation/entities/raw.entity';
 import { faker } from '@faker-js/faker';
 
 const configurationService = {
@@ -32,6 +34,10 @@ const httpErrorFactory = {} as jest.MockedObjectDeep<HttpErrorFactory>;
 
 const networkService = {} as jest.MockedObjectDeep<INetworkService>;
 
+const mockLoggingService = {
+  debug: jest.fn(),
+} as jest.MockedObjectDeep<ILoggingService>;
+
 describe('Transaction API Manager Tests', () => {
   beforeEach(() => {
     jest.resetAllMocks();
@@ -53,12 +59,15 @@ describe('Transaction API Manager Tests', () => {
       .with('vpcTransactionService', vpcTxServiceUrl)
       .build();
     const expirationTimeInSeconds = faker.number.int();
+    const indexingExpirationTimeInSeconds = faker.number.int();
     const notFoundExpireTimeSeconds = faker.number.int();
     const ownersTtlSeconds = faker.number.int();
     configurationServiceMock.getOrThrow.mockImplementation((key) => {
       if (key === 'safeTransaction.useVpcUrl') return useVpcUrl;
       else if (key === 'expirationTimeInSeconds.default')
         return expirationTimeInSeconds;
+      else if (key === 'expirationTimeInSeconds.indexing')
+        return indexingExpirationTimeInSeconds;
       else if (key === 'expirationTimeInSeconds.notFound.default')
         return notFoundExpireTimeSeconds;
       else if (key === 'expirationTimeInSeconds.notFound.contract')
@@ -66,10 +75,12 @@ describe('Transaction API Manager Tests', () => {
       else if (key === 'expirationTimeInSeconds.notFound.token')
         return notFoundExpireTimeSeconds;
       else if (key === 'owners.ownersTtlSeconds') return ownersTtlSeconds;
+      // TODO: Remove after Vault decoding has been released
+      else if (key === 'application.isProduction') return true;
 
       throw new Error(`Unexpected key: ${key}`);
     });
-    configApiMock.getChain.mockResolvedValue(chain);
+    configApiMock.getChain.mockResolvedValue(rawify(chain));
     const target = new TransactionApiManager(
       configurationServiceMock,
       configApiMock,
@@ -77,9 +88,10 @@ describe('Transaction API Manager Tests', () => {
       cacheService,
       httpErrorFactory,
       networkService,
+      mockLoggingService,
     );
 
-    const transactionApi = await target.getTransactionApi(chain.chainId);
+    const transactionApi = await target.getApi(chain.chainId);
     await transactionApi.getBackbone();
 
     expect(dataSourceMock.get).toHaveBeenCalledWith({

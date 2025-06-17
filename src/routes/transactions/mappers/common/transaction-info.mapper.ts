@@ -1,13 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { IConfigurationService } from '@/config/configuration.service.interface';
 import { ModuleTransaction } from '@/domain/safe/entities/module-transaction.entity';
 import { MultisigTransaction } from '@/domain/safe/entities/multisig-transaction.entity';
 import { Operation } from '@/domain/safe/entities/operation.entity';
 import { TokenRepository } from '@/domain/tokens/token.repository';
 import { ITokenRepository } from '@/domain/tokens/token.repository.interface';
-import { TokenType } from '@/routes/balances/entities/token-type.entity';
-import { DataDecodedParameter } from '@/routes/data-decode/entities/data-decoded-parameter.entity';
-import { DataDecoded } from '@/routes/data-decode/entities/data-decoded.entity';
 import { SettingsChangeTransaction } from '@/routes/transactions/entities/settings-change-transaction.entity';
 import { TransactionInfo } from '@/routes/transactions/entities/transaction-info.entity';
 import { CustomTransactionMapper } from '@/routes/transactions/mappers/common/custom-transaction.mapper';
@@ -17,20 +13,36 @@ import { Erc721TransferMapper } from '@/routes/transactions/mappers/common/erc72
 import { HumanDescriptionMapper } from '@/routes/transactions/mappers/common/human-description.mapper';
 import { NativeCoinTransferMapper } from '@/routes/transactions/mappers/common/native-coin-transfer.mapper';
 import { SettingsChangeMapper } from '@/routes/transactions/mappers/common/settings-change.mapper';
-import { SetPreSignatureDecoder } from '@/domain/swaps/contracts/decoders/set-pre-signature-decoder.helper';
 import { SwapOrderMapper } from '@/routes/transactions/mappers/common/swap-order.mapper';
-import { MultiSendDecoder } from '@/domain/contracts/decoders/multi-send-decoder.helper';
-import { isHex } from 'viem';
 import { ILoggingService, LoggingService } from '@/logging/logging.interface';
-import { SwapOrderTransactionInfo } from '@/routes/transactions/entities/swap-order-info.entity';
+import { SwapOrderTransactionInfo } from '@/routes/transactions/entities/swaps/swap-order-info.entity';
+import { SwapOrderHelper } from '@/routes/transactions/helpers/swap-order.helper';
+import { TwapOrderMapper } from '@/routes/transactions/mappers/common/twap-order.mapper';
+import { TwapOrderHelper } from '@/routes/transactions/helpers/twap-order.helper';
+import { TwapOrderTransactionInfo } from '@/routes/transactions/entities/swaps/twap-order-info.entity';
+import { NativeStakingDepositTransactionInfo } from '@/routes/transactions/entities/staking/native-staking-deposit-info.entity';
+import { NativeStakingMapper } from '@/routes/transactions/mappers/common/native-staking.mapper';
+import { KilnNativeStakingHelper } from '@/routes/transactions/helpers/kiln-native-staking.helper';
+import { NativeStakingValidatorsExitTransactionInfo } from '@/routes/transactions/entities/staking/native-staking-validators-exit-info.entity';
+import { NativeStakingWithdrawTransactionInfo } from '@/routes/transactions/entities/staking/native-staking-withdraw-info.entity';
+import { KilnVaultHelper } from '@/routes/transactions/helpers/kiln-vault.helper';
+import { VaultTransactionMapper } from '@/routes/transactions/mappers/common/vault-transaction.mapper';
+import {
+  VaultDepositTransactionInfo,
+  VaultRedeemTransactionInfo,
+} from '@/routes/transactions/entities/vaults/vault-transaction-info.entity';
+import { IConfigurationService } from '@/config/configuration.service.interface';
+import {
+  BaseDataDecoded,
+  DataDecoded,
+} from '@/domain/data-decoder/v2/entities/data-decoded.entity';
 
 @Injectable()
 export class MultisigTransactionInfoMapper {
+  private readonly isVaultTransactionsMappingEnabled: boolean;
   private readonly TRANSFER_METHOD = 'transfer';
   private readonly TRANSFER_FROM_METHOD = 'transferFrom';
   private readonly SAFE_TRANSFER_FROM_METHOD = 'safeTransferFrom';
-  private readonly isRichFragmentsEnabled: boolean;
-  private readonly isSwapsDecodingEnabled: boolean;
 
   private readonly ERC20_TRANSFER_METHODS = [
     this.TRANSFER_METHOD,
@@ -45,9 +57,9 @@ export class MultisigTransactionInfoMapper {
 
   constructor(
     @Inject(ITokenRepository) private readonly tokenRepository: TokenRepository,
+    @Inject(LoggingService) private readonly loggingService: ILoggingService,
     @Inject(IConfigurationService)
     private readonly configurationService: IConfigurationService,
-    @Inject(LoggingService) private readonly loggingService: ILoggingService,
     private readonly dataDecodedParamHelper: DataDecodedParamHelper,
     private readonly customTransactionMapper: CustomTransactionMapper,
     private readonly settingsChangeMapper: SettingsChangeMapper,
@@ -55,21 +67,23 @@ export class MultisigTransactionInfoMapper {
     private readonly erc20TransferMapper: Erc20TransferMapper,
     private readonly erc721TransferMapper: Erc721TransferMapper,
     private readonly humanDescriptionMapper: HumanDescriptionMapper,
-    private readonly setPreSignatureDecoder: SetPreSignatureDecoder,
     private readonly swapOrderMapper: SwapOrderMapper,
-    private readonly multiSendDecoder: MultiSendDecoder,
+    private readonly swapOrderHelper: SwapOrderHelper,
+    private readonly twapOrderMapper: TwapOrderMapper,
+    private readonly twapOrderHelper: TwapOrderHelper,
+    private readonly kilnNativeStakingHelper: KilnNativeStakingHelper,
+    private readonly kilnVaultHelper: KilnVaultHelper,
+    private readonly nativeStakingMapper: NativeStakingMapper,
+    private readonly vaultTransactionMapper: VaultTransactionMapper,
   ) {
-    this.isRichFragmentsEnabled = this.configurationService.getOrThrow(
-      'features.richFragments',
-    );
-    this.isSwapsDecodingEnabled = this.configurationService.getOrThrow(
-      'features.swapsDecoding',
-    );
+    this.isVaultTransactionsMappingEnabled =
+      this.configurationService.getOrThrow('features.vaultTransactionsMapping');
   }
 
   async mapTransactionInfo(
     chainId: string,
     transaction: MultisigTransaction | ModuleTransaction,
+    dataDecoded: DataDecoded | null,
   ): Promise<TransactionInfo> {
     const value = Number(transaction?.value) || 0;
     const dataByteLength = transaction.data
@@ -79,26 +93,68 @@ export class MultisigTransactionInfoMapper {
     const dataSize =
       dataByteLength >= 2 ? Math.floor((dataByteLength - 2) / 2) : 0;
 
-    const richDecodedInfo =
-      await this.humanDescriptionMapper.mapRichDecodedInfo(
+    const humanDescription =
+      await this.humanDescriptionMapper.mapHumanDescription(
         transaction,
         chainId,
       );
 
-    const humanDescription =
-      this.humanDescriptionMapper.mapHumanDescription(richDecodedInfo);
+    const swapOrder: SwapOrderTransactionInfo | null = await this.mapSwapOrder(
+      chainId,
+      transaction,
+    );
+    // If the transaction is a swap order, we return it immediately
+    if (swapOrder) return swapOrder;
 
-    // If the rich fragment feature is disabled, we set it as undefined.
-    // Undefined properties are not rendered on the response
-    const richDecodedInfoApiProperty = this.isRichFragmentsEnabled
-      ? richDecodedInfo
-      : undefined;
+    // If the transaction is a TWAP order, we return it immediately
+    const twapOrder = await this.mapTwapOrder(chainId, transaction);
+    if (twapOrder) {
+      return twapOrder;
+    }
 
-    if (this.isSwapsDecodingEnabled) {
-      const swapOrder: SwapOrderTransactionInfo | null =
-        await this.mapSwapOrder(chainId, transaction);
-      // If the transaction is a swap order, we return it immediately
-      if (swapOrder) return swapOrder;
+    const nativeStakingDeposit = await this.mapNativeStakingDeposit(
+      chainId,
+      transaction,
+    );
+    // If the transaction is a native staking deposit, we return it immediately
+    if (nativeStakingDeposit) {
+      return nativeStakingDeposit;
+    }
+
+    const nativeStakingValidatorsExit =
+      await this.mapNativeStakingValidatorsExit(chainId, transaction);
+    // If the transaction is a native staking validators exit, we return it immediately
+    if (nativeStakingValidatorsExit) {
+      return nativeStakingValidatorsExit;
+    }
+
+    const nativeStakingWithdraw = await this.mapNativeStakingWithdraw(
+      chainId,
+      transaction,
+    );
+    // If the transaction is a native staking withdraw, we return it immediately
+    if (nativeStakingWithdraw) {
+      return nativeStakingWithdraw;
+    }
+
+    if (this.isVaultTransactionsMappingEnabled) {
+      const vaultDeposit = await this.mapVaultDeposit({
+        chainId,
+        transaction,
+      });
+      // If the transaction is a vault deposit, we return it immediately
+      if (vaultDeposit) {
+        return vaultDeposit;
+      }
+
+      const vaultRedeem = await this.mapVaultRedeem({
+        chainId,
+        transaction,
+      });
+      // If the transaction is a vault redeem, we return it immediately
+      if (vaultRedeem) {
+        return vaultRedeem;
+      }
     }
 
     if (this.isCustomTransaction(value, dataSize, transaction.operation)) {
@@ -107,7 +163,7 @@ export class MultisigTransactionInfoMapper {
         dataSize,
         chainId,
         humanDescription,
-        richDecodedInfoApiProperty,
+        dataDecoded,
       );
     }
 
@@ -116,62 +172,49 @@ export class MultisigTransactionInfoMapper {
         chainId,
         transaction,
         humanDescription,
-        richDecodedInfoApiProperty,
       );
     }
 
-    if (this.isSettingsChange(transaction, value, dataSize)) {
+    if (this.isSettingsChange(transaction, value, dataSize, dataDecoded)) {
       const settingsInfo = await this.settingsChangeMapper.mapSettingsChange(
         chainId,
-        transaction,
+        dataDecoded,
       );
 
-      if (!transaction.dataDecoded) {
+      if (!dataDecoded) {
         throw new Error(
           `Data decoded is null. txHash=${transaction.transactionHash}`,
         );
       }
 
-      const dataDecodedParameters: DataDecodedParameter[] | null =
-        transaction.dataDecoded.parameters?.map(
-          (parameter) =>
-            new DataDecodedParameter(
-              parameter.name,
-              parameter.type,
-              parameter.value,
-              parameter.valueDecoded,
-            ),
-        ) ?? null;
-
       return new SettingsChangeTransaction(
-        new DataDecoded(transaction.dataDecoded.method, dataDecodedParameters),
+        dataDecoded,
         settingsInfo,
         humanDescription,
-        richDecodedInfoApiProperty,
       );
     }
 
-    if (this.isValidTokenTransfer(transaction)) {
+    if (this.isValidTokenTransfer(transaction.safe, dataDecoded)) {
       const token = await this.tokenRepository
         .getToken({ chainId, address: transaction.to })
         .catch(() => null);
 
       switch (token?.type) {
-        case TokenType.Erc20:
+        case 'ERC20':
           return this.erc20TransferMapper.mapErc20Transfer(
             token,
             chainId,
             transaction,
             humanDescription,
-            richDecodedInfoApiProperty,
+            dataDecoded,
           );
-        case TokenType.Erc721:
+        case 'ERC721':
           return this.erc721TransferMapper.mapErc721Transfer(
             token,
             chainId,
             transaction,
             humanDescription,
-            richDecodedInfoApiProperty,
+            dataDecoded,
           );
       }
     }
@@ -181,13 +224,8 @@ export class MultisigTransactionInfoMapper {
       dataSize,
       chainId,
       humanDescription,
-      richDecodedInfoApiProperty,
+      dataDecoded,
     );
-  }
-
-  private isSwapOrder(transaction: { data?: `0x${string}` }): boolean {
-    if (!transaction.data) return false;
-    return this.setPreSignatureDecoder.isSetPreSignature(transaction.data);
   }
 
   /**
@@ -202,11 +240,11 @@ export class MultisigTransactionInfoMapper {
     chainId: string,
     transaction: MultisigTransaction | ModuleTransaction,
   ): Promise<SwapOrderTransactionInfo | null> {
-    if (!transaction?.data || !isHex(transaction.data)) {
+    if (!transaction?.data) {
       return null;
     }
 
-    const orderData: `0x${string}` | null = this.findSwapOrder(
+    const orderData: `0x${string}` | null = this.swapOrderHelper.findSwapOrder(
       transaction.data,
     );
 
@@ -226,30 +264,214 @@ export class MultisigTransactionInfoMapper {
   }
 
   /**
-   * Finds the swap order in the transaction data.
-   * The swap order can be in the transaction data directly or in the data of a Multisend transaction.
+   * Maps a TWAP order transaction.
+   * If the transaction is not a TWAP order, it returns null.
    *
-   * @param data - The transaction data
-   * @private
-   * @returns The swap order if found, otherwise null
+   * @param chainId - chain ID of the transaction
+   * @param transaction - transaction to map
+   * @returns mapped {@link TwapOrderTransactionInfo} or null if none found
    */
-  private findSwapOrder(data: `0x${string}`): `0x${string}` | null {
-    // The swap order can be in the transaction data directly
-    if (this.isSwapOrder({ data })) {
-      return data;
+  private async mapTwapOrder(
+    chainId: string,
+    transaction: MultisigTransaction | ModuleTransaction,
+  ): Promise<TwapOrderTransactionInfo | null> {
+    if (!transaction?.data) {
+      return null;
     }
-    // or in the data of a multisend transaction
-    if (this.multiSendDecoder.helpers.isMultiSend(data)) {
-      const transactions = this.multiSendDecoder.mapMultiSendTransactions(data);
-      // TODO If we can build a sorted hash map of the transactions, we can avoid iterating all of them
-      //  as we know the pattern of a Swap Order.
-      for (const transaction of transactions) {
-        if (this.isSwapOrder(transaction)) {
-          return transaction.data;
-        }
-      }
+
+    const orderData = this.twapOrderHelper.findTwapOrder({
+      to: transaction.to,
+      data: transaction.data,
+    });
+
+    if (!orderData) {
+      return null;
     }
-    return null;
+
+    try {
+      return await this.twapOrderMapper.mapTwapOrder(
+        chainId,
+        transaction.safe,
+        {
+          data: orderData,
+          executionDate: transaction.executionDate,
+        },
+      );
+    } catch (error) {
+      this.loggingService.warn(error);
+      return null;
+    }
+  }
+
+  /**
+   * Maps a native staking `deposit` transaction.
+   * If the transaction is not to an official deployment, it returns null.
+   *
+   * @param chainId - chain ID of the transaction
+   * @param transaction - transaction to map
+   * @returns mapped {@link NativeStakingDepositTransactionInfo} or null if none found
+   */
+  private async mapNativeStakingDeposit(
+    chainId: string,
+    transaction: MultisigTransaction | ModuleTransaction,
+  ): Promise<NativeStakingDepositTransactionInfo | null> {
+    if (!transaction?.data || !transaction.value) {
+      return null;
+    }
+
+    const nativeStakingDepositTransaction =
+      this.kilnNativeStakingHelper.findDepositTransaction({
+        to: transaction.to,
+        data: transaction.data,
+        value: transaction.value,
+      });
+
+    if (!nativeStakingDepositTransaction?.to) {
+      return null;
+    }
+
+    try {
+      return await this.nativeStakingMapper.mapDepositInfo({
+        chainId,
+        to: nativeStakingDepositTransaction.to,
+        value: nativeStakingDepositTransaction.value,
+        txHash: transaction.transactionHash,
+      });
+    } catch (error) {
+      this.loggingService.warn(error);
+      return null;
+    }
+  }
+
+  private async mapNativeStakingValidatorsExit(
+    chainId: string,
+    transaction: MultisigTransaction | ModuleTransaction,
+  ): Promise<NativeStakingValidatorsExitTransactionInfo | null> {
+    if (!transaction?.data || !transaction.value) {
+      return null;
+    }
+
+    const nativeStakingValidatorsExitTransaction =
+      this.kilnNativeStakingHelper.findValidatorsExitTransaction({
+        to: transaction.to,
+        data: transaction.data,
+        value: transaction.value,
+      });
+
+    if (!nativeStakingValidatorsExitTransaction?.to) {
+      return null;
+    }
+
+    try {
+      return await this.nativeStakingMapper.mapValidatorsExitInfo({
+        chainId,
+        safeAddress: transaction.safe,
+        to: nativeStakingValidatorsExitTransaction.to,
+        data: nativeStakingValidatorsExitTransaction.data,
+      });
+    } catch (error) {
+      this.loggingService.warn(error);
+      return null;
+    }
+  }
+
+  private async mapVaultDeposit(args: {
+    chainId: string;
+    transaction: MultisigTransaction | ModuleTransaction;
+  }): Promise<VaultDepositTransactionInfo | null> {
+    if (!args.transaction?.data || !args.transaction.value) {
+      return null;
+    }
+
+    const vaultDepositTransaction =
+      this.kilnVaultHelper.getVaultDepositTransaction({
+        to: args.transaction.to,
+        data: args.transaction.data,
+        value: args.transaction.value,
+      });
+
+    if (!vaultDepositTransaction?.to) {
+      return null;
+    }
+
+    try {
+      return await this.vaultTransactionMapper.mapDepositInfo({
+        chainId: args.chainId,
+        to: vaultDepositTransaction.to,
+        assets: vaultDepositTransaction.assets,
+        data: vaultDepositTransaction.data,
+        safeAddress: args.transaction.safe,
+      });
+    } catch (error) {
+      this.loggingService.warn(error);
+      return null;
+    }
+  }
+
+  private async mapVaultRedeem(args: {
+    chainId: string;
+    transaction: MultisigTransaction | ModuleTransaction;
+  }): Promise<VaultRedeemTransactionInfo | null> {
+    if (!args.transaction?.data || !args.transaction.value) {
+      return null;
+    }
+
+    const vaultRedeemOrWithdrawTransaction =
+      this.kilnVaultHelper.getVaultRedeemOrWithdrawTransaction({
+        to: args.transaction.to,
+        data: args.transaction.data,
+        value: args.transaction.value,
+      });
+
+    if (!vaultRedeemOrWithdrawTransaction?.to) {
+      return null;
+    }
+
+    try {
+      return await this.vaultTransactionMapper.mapRedeemInfo({
+        chainId: args.chainId,
+        to: vaultRedeemOrWithdrawTransaction.to,
+        assets: vaultRedeemOrWithdrawTransaction.assets,
+        data: vaultRedeemOrWithdrawTransaction.data,
+        safeAddress: args.transaction.safe,
+      });
+    } catch (error) {
+      this.loggingService.warn(error);
+      return null;
+    }
+  }
+
+  private async mapNativeStakingWithdraw(
+    chainId: string,
+    transaction: MultisigTransaction | ModuleTransaction,
+  ): Promise<NativeStakingWithdrawTransactionInfo | null> {
+    if (!transaction?.data || !transaction.value) {
+      return null;
+    }
+
+    const nativeStakingWithdrawTransaction =
+      this.kilnNativeStakingHelper.findWithdrawTransaction({
+        to: transaction.to,
+        data: transaction.data,
+        value: transaction.value,
+      });
+
+    if (!nativeStakingWithdrawTransaction?.to) {
+      return null;
+    }
+
+    try {
+      return await this.nativeStakingMapper.mapWithdrawInfo({
+        chainId,
+        safeAddress: transaction.safe,
+        to: nativeStakingWithdrawTransaction.to,
+        txHash: transaction.transactionHash,
+        data: nativeStakingWithdrawTransaction.data,
+      });
+    } catch (error) {
+      this.loggingService.warn(error);
+      return null;
+    }
   }
 
   private isCustomTransaction(
@@ -257,7 +479,7 @@ export class MultisigTransactionInfoMapper {
     dataSize: number,
     operation: Operation,
   ): boolean {
-    return (value > 0 && dataSize > 0) || operation !== 0;
+    return (value > 0 && dataSize > 0) || operation !== Operation.CALL;
   }
 
   private isNativeCoinTransfer(value: number, dataSize: number): boolean {
@@ -268,10 +490,11 @@ export class MultisigTransactionInfoMapper {
     transaction: MultisigTransaction | ModuleTransaction,
     value: number,
     dataSize: number,
+    dataDecoded: DataDecoded | null,
   ): boolean {
-    const isSettingsChangeMethod: boolean = transaction.dataDecoded
+    const isSettingsChangeMethod: boolean = dataDecoded
       ? SettingsChangeMapper.SETTINGS_CHANGE_METHODS.includes(
-          transaction.dataDecoded.method,
+          dataDecoded.method,
         )
       : false;
 
@@ -283,45 +506,39 @@ export class MultisigTransactionInfoMapper {
     );
   }
 
-  private isValidTokenTransfer(
-    transaction: MultisigTransaction | ModuleTransaction,
+  public isValidTokenTransfer(
+    safeAddress: `0x${string}`,
+    dataDecoded: BaseDataDecoded | null,
   ): boolean {
     return (
-      (this.isErc20Transfer(transaction) ||
-        this.isErc721Transfer(transaction)) &&
-      this.isSafeSenderOrReceiver(transaction)
+      (this.isErc20Transfer(dataDecoded) ||
+        this.isErc721Transfer(dataDecoded)) &&
+      this.isSafeSenderOrReceiver(safeAddress, dataDecoded)
     );
   }
 
-  private isErc20Transfer(
-    transaction: MultisigTransaction | ModuleTransaction,
-  ): boolean {
-    const { dataDecoded } = transaction;
+  private isErc20Transfer(dataDecoded: BaseDataDecoded | null): boolean {
     return this.ERC20_TRANSFER_METHODS.some(
       (method) => method === dataDecoded?.method,
     );
   }
 
-  private isErc721Transfer(
-    transaction: MultisigTransaction | ModuleTransaction,
-  ): boolean {
-    const { dataDecoded } = transaction;
+  private isErc721Transfer(dataDecoded: BaseDataDecoded | null): boolean {
     return this.ERC721_TRANSFER_METHODS.some(
       (method) => method === dataDecoded?.method,
     );
   }
 
   private isSafeSenderOrReceiver(
-    transaction: MultisigTransaction | ModuleTransaction,
+    safeAddress: `0x${string}`,
+    dataDecoded: BaseDataDecoded | null,
   ): boolean {
-    const { dataDecoded } = transaction;
     if (!dataDecoded) return false;
     return (
       this.TRANSFER_METHOD == dataDecoded.method ||
       this.dataDecodedParamHelper.getFromParam(dataDecoded, '') ===
-        transaction.safe ||
-      this.dataDecodedParamHelper.getToParam(dataDecoded, '') ===
-        transaction.safe
+        safeAddress ||
+      this.dataDecodedParamHelper.getToParam(dataDecoded, '') === safeAddress
     );
   }
 }

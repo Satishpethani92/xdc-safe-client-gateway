@@ -1,5 +1,11 @@
 import { Page } from '@/domain/entities/page.entity';
 import { Message } from '@/domain/messages/entities/message.entity';
+import { Module } from '@nestjs/common';
+import { MessagesRepository } from '@/domain/messages/messages.repository';
+import { TransactionApiManagerModule } from '@/domain/interfaces/transaction-api.manager.interface';
+import { SafeRepositoryModule } from '@/domain/safe/safe.repository.interface';
+import { MessageVerifierHelper } from '@/domain/messages/helpers/message-verifier.helper';
+import { TypedData } from '@/domain/messages/entities/typed-data.entity';
 
 export const IMessagesRepository = Symbol('IMessagesRepository');
 
@@ -11,17 +17,18 @@ export interface IMessagesRepository {
 
   getMessagesBySafe(args: {
     chainId: string;
-    safeAddress: string;
+    safeAddress: `0x${string}`;
     limit?: number;
     offset?: number;
   }): Promise<Page<Message>>;
 
   createMessage(args: {
     chainId: string;
-    safeAddress: string;
-    message: unknown;
+    safeAddress: `0x${string}`;
+    message: string | TypedData;
     safeAppId: number;
-    signature: string;
+    signature: `0x${string}`;
+    origin: string | null;
   }): Promise<unknown>;
 
   updateMessageSignature(args: {
@@ -32,7 +39,7 @@ export interface IMessagesRepository {
 
   clearMessagesBySafe(args: {
     chainId: string;
-    safeAddress: string;
+    safeAddress: `0x${string}`;
   }): Promise<void>;
 
   clearMessagesByHash(args: {
@@ -40,3 +47,16 @@ export interface IMessagesRepository {
     messageHash: string;
   }): Promise<void>;
 }
+
+@Module({
+  imports: [TransactionApiManagerModule, SafeRepositoryModule],
+  providers: [
+    {
+      provide: IMessagesRepository,
+      useClass: MessagesRepository,
+    },
+    MessageVerifierHelper,
+  ],
+  exports: [IMessagesRepository],
+})
+export class MessagesRepositoryModule {}

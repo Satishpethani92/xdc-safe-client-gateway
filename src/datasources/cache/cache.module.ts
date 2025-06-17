@@ -6,6 +6,7 @@ import { RedisCacheService } from '@/datasources/cache/redis.cache.service';
 import { CacheReadiness } from '@/domain/interfaces/cache-readiness.interface';
 import { ILoggingService, LoggingService } from '@/logging/logging.interface';
 import { CacheKeyPrefix } from '@/datasources/cache/constants';
+import { LogType } from '@/domain/common/entities/log-type.entity';
 
 export type RedisClientType = ReturnType<typeof createClient>;
 
@@ -13,13 +14,36 @@ async function redisClientFactory(
   configurationService: IConfigurationService,
   loggingService: ILoggingService,
 ): Promise<RedisClientType> {
+  const redisUser = configurationService.get<string>('redis.user');
+  const redisPass = configurationService.get<string>('redis.pass');
   const redisHost = configurationService.getOrThrow<string>('redis.host');
   const redisPort = configurationService.getOrThrow<string>('redis.port');
+  const redisDisableOfflineQueue = configurationService.getOrThrow<boolean>(
+    'redis.disableOfflineQueue',
+  );
   const client: RedisClientType = createClient({
     url: `redis://${redisHost}:${redisPort}/2`,
   });
   client.on('error', (err) =>
-    loggingService.error(`Redis client error: ${err}`),
+    loggingService.error({
+      type: LogType.CacheError,
+      source: 'CacheModule',
+      event: err.code ?? err.message,
+    }),
+  );
+  client.on('reconnecting', () =>
+    loggingService.warn({
+      type: LogType.CacheEvent,
+      source: 'CacheModule',
+      event: 'Reconnecting to Redis',
+    }),
+  );
+  client.on('end', () =>
+    loggingService.warn({
+      type: LogType.CacheEvent,
+      source: 'CacheModule',
+      event: 'Redis connection closed',
+    }),
   );
   await client.connect();
   return client;

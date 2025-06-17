@@ -1,9 +1,9 @@
 import { decodeFunctionData, isHex, parseAbi } from 'viem';
-import {
+import type {
   HumanDescriptionFragment,
   TextFragment,
-  ValueType,
 } from '@/domain/human-description/entities/human-description.entity';
+import { ValueType } from '@/domain/human-description/entities/human-description.entity';
 
 type SafeRegExpExecArray = RegExpExecArray & {
   groups: NonNullable<RegExpExecArray['groups']>;
@@ -28,7 +28,7 @@ export class HumanDescriptionTemplate {
    * Store the regex matches as an array instead of an iterable so that it can be restarted
    * @private
    */
-  private readonly templateMatches: SafeRegExpExecArray[];
+  private readonly templateMatches: Array<SafeRegExpExecArray>;
 
   constructor(
     functionSignature: string,
@@ -52,13 +52,13 @@ export class HumanDescriptionTemplate {
    * @param to - the target address of the transaction
    * @param data - the raw data of the transaction
    */
-  parse(to: string, data: `0x${string}`): HumanDescriptionFragment[] {
+  parse(to: string, data: `0x${string}`): Array<HumanDescriptionFragment> {
     const { args } = decodeFunctionData({
       abi: this.functionAbi,
       data,
     });
 
-    const fragments: HumanDescriptionFragment[] = [];
+    const fragments: Array<HumanDescriptionFragment> = [];
 
     for (const match of this.templateMatches) {
       if ('textToken' in match.groups && match.groups.textToken !== undefined) {
@@ -97,12 +97,12 @@ export class HumanDescriptionTemplate {
     to: string,
     tokenType: string,
     index: number,
-    args: readonly unknown[],
+    args: ReadonlyArray<unknown>,
   ): HumanDescriptionFragment {
     const value = args[index];
 
     switch (tokenType) {
-      case ValueType.TokenValue: {
+      case 'tokenValue': {
         if (typeof value !== 'bigint') {
           throw Error(
             `Invalid token type amount. tokenType=${tokenType}, amount=${value}`,
@@ -114,7 +114,7 @@ export class HumanDescriptionTemplate {
           value: { amount: value, address: to },
         };
       }
-      case ValueType.Address: {
+      case 'address': {
         if (!isHex(value)) {
           throw Error(
             `Invalid token type value. tokenType=${tokenType}, address=${value}`,
@@ -126,7 +126,7 @@ export class HumanDescriptionTemplate {
           value,
         };
       }
-      case ValueType.Number: {
+      case 'number': {
         if (typeof value !== 'bigint') {
           throw Error(
             `Invalid token type value. tokenType=${tokenType}, address=${value}`,

@@ -2,15 +2,16 @@ import { faker } from '@faker-js/faker';
 import { moduleTransactionBuilder } from '@/domain/safe/entities/__tests__/module-transaction.builder';
 import { safeBuilder } from '@/domain/safe/entities/__tests__/safe.builder';
 import { addressInfoBuilder } from '@/routes/common/__tests__/entities/address-info.builder';
-import { AddressInfoHelper } from '@/routes/common/address-info/address-info.helper';
+import type { AddressInfoHelper } from '@/routes/common/address-info/address-info.helper';
 import { transferTransactionInfoBuilder } from '@/routes/transactions/entities/__tests__/transfer-transaction-info.builder';
 import { ModuleExecutionDetails } from '@/routes/transactions/entities/transaction-details/module-execution-details.entity';
 import { TransactionStatus } from '@/routes/transactions/entities/transaction-status.entity';
-import { TransactionDataMapper } from '@/routes/transactions/mappers/common/transaction-data.mapper';
-import { MultisigTransactionInfoMapper } from '@/routes/transactions/mappers/common/transaction-info.mapper';
+import type { TransactionDataMapper } from '@/routes/transactions/mappers/common/transaction-data.mapper';
+import type { MultisigTransactionInfoMapper } from '@/routes/transactions/mappers/common/transaction-info.mapper';
 import { ModuleTransactionDetailsMapper } from '@/routes/transactions/mappers/module-transactions/module-transaction-details.mapper';
-import { ModuleTransactionStatusMapper } from '@/routes/transactions/mappers/module-transactions/module-transaction-status.mapper';
+import type { ModuleTransactionStatusMapper } from '@/routes/transactions/mappers/module-transactions/module-transaction-status.mapper';
 import { getAddress } from 'viem';
+import { dataDecodedBuilder } from '@/domain/data-decoder/v2/entities/__tests__/data-decoded.builder';
 
 describe('ModuleTransactionDetails mapper (Unit)', () => {
   let mapper: ModuleTransactionDetailsMapper;
@@ -30,6 +31,7 @@ describe('ModuleTransactionDetails mapper (Unit)', () => {
   const transactionDataMapper = jest.mocked({
     isTrustedDelegateCall: jest.fn(),
     buildAddressInfoIndex: jest.fn(),
+    buildTokenInfoIndex: jest.fn(),
   } as jest.MockedObjectDeep<TransactionDataMapper>);
 
   beforeEach(() => {
@@ -48,6 +50,7 @@ describe('ModuleTransactionDetails mapper (Unit)', () => {
     const transaction = moduleTransactionBuilder()
       .with('safe', getAddress(safe.address))
       .build();
+    const dataDecoded = dataDecodedBuilder().build();
     const txStatus = faker.helpers.objectValue(TransactionStatus);
     statusMapper.mapTransactionStatus.mockReturnValue(txStatus);
     const txInfo = transferTransactionInfoBuilder().build();
@@ -60,7 +63,7 @@ describe('ModuleTransactionDetails mapper (Unit)', () => {
       trustedDelegateCallTarget,
     );
 
-    const actual = await mapper.mapDetails(chainId, transaction);
+    const actual = await mapper.mapDetails(chainId, transaction, dataDecoded);
 
     expect(actual).toEqual({
       safeAddress: getAddress(safe.address),
@@ -70,16 +73,18 @@ describe('ModuleTransactionDetails mapper (Unit)', () => {
       txInfo,
       txData: expect.objectContaining({
         hexData: transaction.data,
-        dataDecoded: transaction.dataDecoded,
+        dataDecoded,
         to: addressInfo,
         value: transaction.value,
         operation: transaction.operation,
         trustedDelegateCallTarget,
         addressInfoIndex: null,
+        tokenInfoIndex: null,
       }),
       txHash: transaction.transactionHash,
       detailedExecutionInfo: new ModuleExecutionDetails(addressInfo),
       safeAppInfo: null,
+      note: null,
     });
   });
 
@@ -89,6 +94,7 @@ describe('ModuleTransactionDetails mapper (Unit)', () => {
     const transaction = moduleTransactionBuilder()
       .with('safe', getAddress(safe.address))
       .build();
+    const dataDecoded = dataDecodedBuilder().build();
     const txStatus = faker.helpers.objectValue(TransactionStatus);
     statusMapper.mapTransactionStatus.mockReturnValue(txStatus);
     const txInfo = transferTransactionInfoBuilder().build();
@@ -107,7 +113,7 @@ describe('ModuleTransactionDetails mapper (Unit)', () => {
       trustedDelegateCallTarget,
     );
 
-    const actual = await mapper.mapDetails(chainId, transaction);
+    const actual = await mapper.mapDetails(chainId, transaction, dataDecoded);
 
     expect(actual).toEqual({
       safeAddress: getAddress(safe.address),
@@ -117,7 +123,7 @@ describe('ModuleTransactionDetails mapper (Unit)', () => {
       txInfo,
       txData: expect.objectContaining({
         hexData: transaction.data,
-        dataDecoded: transaction.dataDecoded,
+        dataDecoded,
         to: addressInfo,
         value: transaction.value,
         operation: transaction.operation,
@@ -127,6 +133,7 @@ describe('ModuleTransactionDetails mapper (Unit)', () => {
       txHash: transaction.transactionHash,
       detailedExecutionInfo: new ModuleExecutionDetails(addressInfo),
       safeAppInfo: null,
+      note: null,
     });
   });
 });

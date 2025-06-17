@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { groupBy } from 'lodash';
+import { Inject, Injectable } from '@nestjs/common';
+import groupBy from 'lodash/groupBy';
 import { MultisigTransaction } from '@/domain/safe/entities/multisig-transaction.entity';
 import { Safe } from '@/domain/safe/entities/safe.entity';
 import { MultisigTransactionMapper } from '@/routes/transactions/mappers/multisig-transactions/multisig-transaction.mapper';
@@ -12,15 +12,22 @@ import {
   LabelQueuedItem,
 } from '@/routes/transactions/entities/queued-items/label-queued-item.entity';
 import { TransactionQueuedItem } from '@/routes/transactions/entities/queued-items/transaction-queued-item.entity';
+import { AddressInfoHelper } from '@/routes/common/address-info/address-info.helper';
+import { IDataDecoderRepository } from '@/domain/data-decoder/v2/data-decoder.repository.interface';
 
 class TransactionGroup {
   nonce!: number;
-  transactions!: MultisigTransaction[];
+  transactions!: Array<MultisigTransaction>;
 }
 
 @Injectable()
 export class QueuedItemsMapper {
-  constructor(private readonly mapper: MultisigTransactionMapper) {}
+  constructor(
+    @Inject(IDataDecoderRepository)
+    private readonly dataDecoderRepository: IDataDecoderRepository,
+    private readonly mapper: MultisigTransactionMapper,
+    private readonly addressInfoHelper: AddressInfoHelper,
+  ) {}
 
   async getQueuedItems(
     transactions: Page<MultisigTransaction>,
@@ -28,13 +35,13 @@ export class QueuedItemsMapper {
     chainId: string,
     previousPageLastNonce: number | null,
     nextPageFirstNonce: number | null,
-  ): Promise<QueuedItem[]> {
+  ): Promise<Array<QueuedItem>> {
     const transactionGroups = this.groupByNonce(transactions.results);
     let lastProcessedNonce = previousPageLastNonce ?? -1;
 
     return await Promise.all(
       transactionGroups.map(async (transactionGroup) => {
-        const transactionGroupItems: QueuedItem[] = [];
+        const transactionGroupItems: Array<QueuedItem> = [];
         const { nonce } = transactionGroup;
         if (lastProcessedNonce < safe.nonce && nonce === safe.nonce) {
           transactionGroupItems.push(new LabelQueuedItem(LabelItem.Next));
@@ -73,13 +80,29 @@ export class QueuedItemsMapper {
     conflictFromPreviousPage: boolean,
     isEdgeGroup: boolean,
     transactionGroup: TransactionGroup,
-  ): Promise<TransactionQueuedItem[]> {
+  ): Promise<Array<TransactionQueuedItem>> {
+    // Prefetch tokens and contracts to avoid multiple parallel requests for the same address
+    await this.mapper.prefetchAddressInfos({
+      chainId: chainId,
+      transactions: transactionGroup.transactions,
+    });
+
     return Promise.all(
       transactionGroup.transactions.map(async (transaction, idx) => {
         const isFirstInGroup = idx === 0;
         const isLastInGroup = idx === transactionGroup.transactions.length - 1;
+        const dataDecoded =
+          await this.dataDecoderRepository.getTransactionDataDecoded({
+            chainId,
+            transaction,
+          });
         return new TransactionQueuedItem(
-          await this.mapper.mapTransaction(chainId, transaction, safe),
+          await this.mapper.mapTransaction(
+            chainId,
+            transaction,
+            safe,
+            dataDecoded,
+          ),
           this.getConflictType(
             isFirstInGroup,
             isLastInGroup,
@@ -120,8 +143,8 @@ export class QueuedItemsMapper {
    * @returns Array<TransactionGroup> in which each group of transactions has a different nonce.
    */
   private groupByNonce(
-    transactions: MultisigTransaction[],
-  ): TransactionGroup[] {
+    transactions: Array<MultisigTransaction>,
+  ): Array<TransactionGroup> {
     return Object.entries(groupBy(transactions, 'nonce')).map(
       ([nonce, transactions]): TransactionGroup => ({
         nonce: Number(nonce),

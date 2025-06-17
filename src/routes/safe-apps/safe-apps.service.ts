@@ -17,8 +17,11 @@ export class SafeAppsService {
     chainId: string;
     clientUrl?: string;
     url?: string;
-  }): Promise<SafeApp[]> {
-    const result = await this.safeAppsRepository.getSafeApps(args);
+  }): Promise<Array<SafeApp>> {
+    const result = await this.safeAppsRepository.getSafeApps({
+      ...args,
+      onlyListed: true,
+    });
 
     return result.map(
       (safeApp) =>
@@ -35,6 +38,7 @@ export class SafeAppsService {
           safeApp.features,
           safeApp.developerWebsite,
           safeApp.socialProfiles,
+          safeApp.featured,
         ),
     );
   }

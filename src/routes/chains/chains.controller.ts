@@ -13,6 +13,7 @@ import {
   Backbone as ApiBackbone,
   Backbone,
 } from '@/routes/chains/entities/backbone.entity';
+import { IndexingStatus } from '@/routes/chains/entities/indexing-status.entity';
 
 @ApiTags('chains')
 @Controller({
@@ -58,7 +59,15 @@ export class ChainsController {
   @Get('/:chainId/about/master-copies')
   async getMasterCopies(
     @Param('chainId') chainId: string,
-  ): Promise<MasterCopy[]> {
+  ): Promise<Array<MasterCopy>> {
     return this.chainsService.getMasterCopies(chainId);
+  }
+
+  @ApiOkResponse({ type: IndexingStatus })
+  @Get('/:chainId/about/indexing')
+  async getIndexingStatus(
+    @Param('chainId') chainId: string,
+  ): Promise<IndexingStatus> {
+    return this.chainsService.getIndexingStatus(chainId);
   }
 }

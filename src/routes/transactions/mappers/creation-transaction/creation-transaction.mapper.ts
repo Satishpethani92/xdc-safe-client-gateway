@@ -39,6 +39,7 @@ export class CreationTransactionMapper {
       transaction.transactionHash,
       implementation,
       factory,
+      transaction.saltNonce,
     );
 
     return new Transaction(
@@ -48,6 +49,7 @@ export class CreationTransactionMapper {
       txInfo,
       null,
       null,
+      transaction.transactionHash,
     );
   }
 }

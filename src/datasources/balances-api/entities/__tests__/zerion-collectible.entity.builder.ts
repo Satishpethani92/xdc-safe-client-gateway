@@ -1,5 +1,6 @@
-import { Builder, IBuilder } from '@/__tests__/builder';
-import {
+import type { IBuilder } from '@/__tests__/builder';
+import { Builder } from '@/__tests__/builder';
+import type {
   ZerionCollectible,
   ZerionCollectibleAttributes,
   ZerionCollectibles,
@@ -7,6 +8,7 @@ import {
   ZerionNFTInfo,
 } from '@/datasources/balances-api/entities/zerion-collectible.entity';
 import { faker } from '@faker-js/faker';
+import { getAddress } from 'viem';
 
 export function zerionNFTInfoBuilder(): IBuilder<ZerionNFTInfo> {
   return new Builder<ZerionNFTInfo>()
@@ -14,7 +16,7 @@ export function zerionNFTInfoBuilder(): IBuilder<ZerionNFTInfo> {
       preview: { url: faker.internet.url({ appendSlash: false }) },
       detail: { url: faker.internet.url({ appendSlash: false }) },
     })
-    .with('contract_address', faker.finance.ethereumAddress())
+    .with('contract_address', getAddress(faker.finance.ethereumAddress()))
     .with('flags', { is_spam: faker.datatype.boolean() })
     .with('interface', faker.string.alphanumeric())
     .with('name', faker.string.alphanumeric())
@@ -34,7 +36,7 @@ export function zerionCollectionInfoBuilder(): IBuilder<ZerionCollectionInfo> {
 export function zerionCollectibleAttributesBuilder(): IBuilder<ZerionCollectibleAttributes> {
   return new Builder<ZerionCollectibleAttributes>()
     .with('amount', faker.string.numeric())
-    .with('changed_at', faker.date.recent().toString())
+    .with('changed_at', faker.date.recent())
     .with('collection_info', zerionCollectionInfoBuilder().build())
     .with('nft_info', zerionNFTInfoBuilder().build())
     .with('price', faker.number.float())

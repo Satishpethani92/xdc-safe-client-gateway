@@ -52,7 +52,7 @@ services:
     environment:
       REDIS_HOST: redis
       PRICES_PROVIDER_API_KEY: ${PRICES_PROVIDER_API_KEY-example_api_key}
-      APPLICATION_PORT: ${APPLICATION_PORT-3000}
+      APPLICATION_PORT: ${APPLICATION_PORT-3001}
       AUTH_TOKEN: ${AUTH_TOKEN-example_auth_token}
       EMAIL_API_APPLICATION_CODE: ${EMAIL_API_APPLICATION_CODE-example_application_code}
       EMAIL_API_FROM_EMAIL: ${EMAIL_API_FROM_EMAIL-changeme@example.com}
@@ -97,7 +97,7 @@ services:
       - ./nginx/templates:/etc/nginx/templates
     environment:
       NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx/
-      APPLICATION_PORT: ${APPLICATION_PORT-3000}
+      APPLICATION_PORT: ${APPLICATION_PORT-3001}
     depends_on:
       - web
 

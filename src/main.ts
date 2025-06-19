@@ -6,7 +6,11 @@ async function bootstrap(): Promise<void> {
   const app = await new DefaultAppProvider().provide(AppModule.register());
 
   app.enableCors({
-    origin: ['http://localhost:3000', 'https://xdcsafe.xdcobserver.io'],
+    origin: [
+      'http://localhost:3000',
+      'http://167.86.106.195:3001',
+      'https://xdcsafe.xdcobserver.io',
+    ],
   });
 
   const configurationService: IConfigurationService =

@@ -8,7 +8,7 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: [
       'http://localhost:3000',
-      'http://167.86.106.195:3001',
+      'http://167.86.106.195:3000',
       'https://xdcsafe.xdcobserver.io',
     ],
   });

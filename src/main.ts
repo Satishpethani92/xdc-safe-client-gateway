@@ -5,6 +5,10 @@ import { IConfigurationService } from '@/config/configuration.service.interface'
 async function bootstrap(): Promise<void> {
   const app = await new DefaultAppProvider().provide(AppModule.register());
 
+  app.enableCors({
+    origin: ['http://localhost:3000', 'https://xdcsafe.xdcobserver.io'],
+  });
+
   const configurationService: IConfigurationService =
     app.get<IConfigurationService>(IConfigurationService);
   const applicationPort: string =

@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const RootConfigurationSchema = z
   .object({
     ACCOUNTS_ENCRYPTION_TYPE: z.enum(['local', 'aws']).optional(),
-    AUTH_TOKEN: z.string(),
+    // AUTH_TOKEN: z.string(),
     AWS_ACCESS_KEY_ID: z.string().optional(),
     AWS_KMS_ENCRYPTION_KEY_ID: z.string().optional(),
     AWS_SECRET_ACCESS_KEY: z.string().optional(),
